@@ -204,7 +204,6 @@ async function createNewSession(title = 'New Chat') {
   const newSession = {
     id: sessionId,
     title: title,
-    userId: userId,
     pinned: false,
     messages: [],
     document: {
@@ -710,8 +709,8 @@ app.get('/api/sessions', async (req, res) => {
 
 app.post('/api/sessions', async (req, res) => {
   try {
-    const { title, userId } = req.body;
-    const sessionId = await createNewSession(title || 'New Chat', userId);
+    const { title } = req.body;
+    const sessionId = await createNewSession(title || 'New Chat');
     res.json({ sessionId });
   } catch (error) {
     res.status(500).json({ error: error.message });
