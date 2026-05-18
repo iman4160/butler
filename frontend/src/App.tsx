@@ -560,6 +560,22 @@ const addActivityToBackend = async (action: string, agent: string = 'user') => {
   }
 };
 
+ const addCodeToCanvas = (code: string, language: string) => {
+    let filename = 'code.txt', icon = '📄';
+    if (language === 'python' || language === 'py') { filename = 'script.py'; icon = '🐍'; }
+    else if (language === 'javascript' || language === 'js') { filename = 'script.js'; icon = '📜'; }
+    else if (language === 'html') { filename = 'index.html'; icon = '🌐'; }
+    else if (language === 'css') { filename = 'style.css'; icon = '🎨'; }
+    else if (language === 'json') { filename = 'data.json'; icon = '📋'; }
+    setCanvasFiles(prev => {
+      const existing = prev.find(f => f.name === filename);
+      if (existing) return prev.map(f => f.name === filename ? { ...f, content: code } : f);
+      else return [...prev, { name: filename, content: code, language, icon }];
+    });
+    setActiveCanvasFile(filename);
+    setShowCodeCanvas(true);
+  };
+
 const sendStreamingMessage = async (message: string) => {
   if (abortControllerRef.current) {
     abortControllerRef.current.abort();
@@ -1487,21 +1503,6 @@ const branchFromNode = async (node: TimelineNode) => {
   const handleCanvasFileChange = (fileName: string, newContent: string) => { setCanvasFiles(prev => prev.map(f => f.name === fileName ? { ...f, content: newContent } : f)); };
   const handleCanvasFileSelect = (fileName: string) => setActiveCanvasFile(fileName);
   
-  const addCodeToCanvas = (code: string, language: string) => {
-    let filename = 'code.txt', icon = '📄';
-    if (language === 'python' || language === 'py') { filename = 'script.py'; icon = '🐍'; }
-    else if (language === 'javascript' || language === 'js') { filename = 'script.js'; icon = '📜'; }
-    else if (language === 'html') { filename = 'index.html'; icon = '🌐'; }
-    else if (language === 'css') { filename = 'style.css'; icon = '🎨'; }
-    else if (language === 'json') { filename = 'data.json'; icon = '📋'; }
-    setCanvasFiles(prev => {
-      const existing = prev.find(f => f.name === filename);
-      if (existing) return prev.map(f => f.name === filename ? { ...f, content: code } : f);
-      else return [...prev, { name: filename, content: code, language, icon }];
-    });
-    setActiveCanvasFile(filename);
-    setShowCodeCanvas(true);
-  };
 
   const handleAddFile = () => {
     const fileName = prompt('Enter file name:');
