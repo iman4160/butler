@@ -668,6 +668,11 @@ const sendStreamingMessage = async (message: string) => {
     }else if (fullResponse.trim()) {
       console.log('💬 Text-only response (no voice)');
     }
+
+     // ✅ ADD THIS RIGHT HERE ↓
+    if (fullResponse.trim()) {
+      triggerLiveJanitor(fullResponse);  // Send AI response to document system
+    }
     
     addActivityToBackend(`🤖 Butler: Responded to "${message.slice(0, 50)}..."`, 'fast-brain');
     
