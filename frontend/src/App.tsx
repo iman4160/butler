@@ -673,6 +673,31 @@ const sendStreamingMessage = async (message: string) => {
     if (fullResponse.trim()) {
       triggerLiveJanitor(fullResponse);  // Send AI response to document system
     }
+
+    const codeBlocks = extractCodeBlocks(fullResponse);
+      if (codeBlocks.length > 0) {
+        codeBlocks.forEach(({ language, code }) => {
+          addCodeToCanvas(code, language);
+        });
+        console.log(`📝 Added ${codeBlocks.length} code block(s) to canvas`);
+      }
+    }
+
+      // After fullResponse is complete, check for code blocks
+  if (fullResponse.trim()) {
+    // Extract code blocks from AI response
+    const codeBlocks = extractCodeBlocks(fullResponse);
+    if (codeBlocks.length > 0) {
+      // Add each code block to canvas
+      codeBlocks.forEach(({ language, code }) => {
+        addCodeToCanvas(code, language);
+      });
+      console.log(`📝 Added ${codeBlocks.length} code block(s) to canvas`);
+    }
+    
+    // Send to Janitor for document tracking
+    triggerLiveJanitor(fullResponse);
+  }
     
     addActivityToBackend(`🤖 Butler: Responded to "${message.slice(0, 50)}..."`, 'fast-brain');
     
