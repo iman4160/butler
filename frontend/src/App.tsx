@@ -657,7 +657,7 @@ const sendStreamingMessage = async (message: string) => {
         }
       }
     }
-        // Only speak if we're in a voice mode (secretary or interactive) AND not muted
+    // Only speak if we're in a voice mode (secretary or interactive) AND not muted
     if (fullResponse.trim() && (secretaryMode || interactiveMode)) {      
       if (!isMuted) {
         console.log('🔊 Speaking response, length:', fullResponse.length);
@@ -665,16 +665,17 @@ const sendStreamingMessage = async (message: string) => {
       } else {
         console.log('🔇 Muted - skipping speech');
       }
-    }else if (fullResponse.trim()) {
+    } else if (fullResponse.trim()) {
       console.log('💬 Text-only response (no voice)');
     }
 
-     // ✅ ADD THIS RIGHT HERE ↓
+    // Process AI response: Update document AND extract code blocks
     if (fullResponse.trim()) {
-      triggerLiveJanitor(fullResponse);  // Send AI response to document system
-    }
-
-    const codeBlocks = extractCodeBlocks(fullResponse);
+      // Update document with AI response
+      triggerLiveJanitor(fullResponse);
+      
+      // Extract code blocks and add to canvas
+      const codeBlocks = extractCodeBlocks(fullResponse);
       if (codeBlocks.length > 0) {
         codeBlocks.forEach(({ language, code }) => {
           addCodeToCanvas(code, language);
@@ -682,22 +683,6 @@ const sendStreamingMessage = async (message: string) => {
         console.log(`📝 Added ${codeBlocks.length} code block(s) to canvas`);
       }
     }
-
-      // After fullResponse is complete, check for code blocks
-  if (fullResponse.trim()) {
-    // Extract code blocks from AI response
-    const codeBlocks = extractCodeBlocks(fullResponse);
-    if (codeBlocks.length > 0) {
-      // Add each code block to canvas
-      codeBlocks.forEach(({ language, code }) => {
-        addCodeToCanvas(code, language);
-      });
-      console.log(`📝 Added ${codeBlocks.length} code block(s) to canvas`);
-    }
-    
-    // Send to Janitor for document tracking
-    triggerLiveJanitor(fullResponse);
-  }
     
     addActivityToBackend(`🤖 Butler: Responded to "${message.slice(0, 50)}..."`, 'fast-brain');
     
