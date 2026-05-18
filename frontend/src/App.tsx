@@ -237,6 +237,7 @@ function App() {
   const [showTimeline, setShowTimeline] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState('');
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
   
   const [timelineNodes, setTimelineNodes] = useState<TimelineNode[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -1196,6 +1197,13 @@ if (voiceResponseEnabled) {
   if (isSpeaking || isStreaming) {
     stopAIResponse();
   }
+  
+  // ✅ Prevent multiple simultaneous session creations
+  if (isCreatingSession) {
+    console.log('Already creating a session, skipping...');
+    return;
+  }
+  
   try {
     const res = await fetch(`${API_URL}/sessions`);
     let data = await res.json();
@@ -1206,7 +1214,6 @@ if (voiceResponseEnabled) {
     });
     setSessions(data);
     
-    // Update current session title if it changed
     if (currentSessionId) {
       const currentSession = data.find(s => s.id === currentSessionId);
       if (currentSession && currentSession.title !== livingDocument.title) {
@@ -1215,13 +1222,11 @@ if (voiceResponseEnabled) {
       }
     }
     
-    // ✅ FIX: Create a new session for new users instead of loading the first one
-    if (data.length === 0 && !currentSessionId) {
+    // ✅ Only create ONE session
+    if (data.length === 0 && !currentSessionId && !isCreatingSession) {
+      setIsCreatingSession(true);
       await createNewSession();
-    } else if (data.length > 0 && !currentSessionId) {
-      // For returning users, we could load their last session
-      // But for now, create a new one to ensure privacy
-      await createNewSession();
+      setIsCreatingSession(false);
     }
   } catch (error) { 
     console.error('Failed to load sessions:', error); 
