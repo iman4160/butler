@@ -315,6 +315,15 @@ function App() {
     setShowBootSequence(false);
   };
 
+  const [userId] = useState(() => {
+  let id = localStorage.getItem('butler_user_id');
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString();
+    localStorage.setItem('butler_user_id', id);
+  }
+  return id;
+});
+
   // Intent Detection
   const detectIntent = (text: string): { intent: 'brainstorming' | 'question' | 'command' | 'direct_address' | 'unknown', confidence: number } => {
     const lowerText = text.toLowerCase().trim();
@@ -1198,7 +1207,6 @@ if (voiceResponseEnabled) {
     stopAIResponse();
   }
   
-  // ✅ Prevent multiple simultaneous session creations
   if (isCreatingSession) {
     console.log('Already creating a session, skipping...');
     return;
@@ -1207,6 +1215,10 @@ if (voiceResponseEnabled) {
   try {
     const res = await fetch(`${API_URL}/sessions`);
     let data = await res.json();
+    
+    // Filter sessions for this user only
+    data = data.filter((session: Session) => session.userId === userId);
+    
     data.sort((a: Session, b: Session) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
@@ -1222,8 +1234,11 @@ if (voiceResponseEnabled) {
       }
     }
     
-    // ✅ Only create ONE session
-    if (data.length === 0 && !currentSessionId && !isCreatingSession) {
+    // Load last session for this user, or create new one
+    if (data.length > 0 && !currentSessionId) {
+      setCurrentSessionId(data[0].id);
+      await loadSession(data[0].id);
+    } else if (data.length === 0 && !currentSessionId && !isCreatingSession) {
       setIsCreatingSession(true);
       await createNewSession();
       setIsCreatingSession(false);
@@ -1271,21 +1286,41 @@ if (voiceResponseEnabled) {
   };
 
   const createNewSession = async () => {
-    try {
-      if (currentSessionId) await saveCurrentSession();
-      const res = await fetch(`${API_URL}/sessions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'New Chat' }) });
-      const data = await res.json();
-      setShowCodeCanvas(false); setShowChatSidebar(false); setShowDocumentPanel(false); setShowTimeline(false);
-      setCanvasFiles([]); setActiveCanvasFile(''); setMessages([]); setTimelineNodes([]); setBranches([]); setDecisions([]);
-      setNextBranchNumber(1); setCurrentBranchId('main'); setActiveRestoredNodeId(null); lastNodeIdRef.current = null;
-      setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
-      setEditTitleValue('Notes'); setIsViewingHistory(false); setSearchTerm(''); setTranscriptSegments([]);
-      if (abortControllerRef.current) abortControllerRef.current.abort();
-      stopSpeaking();
-      await loadSessions();
-      await loadSession(data.sessionId);
-    } catch (error) { console.error('Failed to create session:', error); }
-  };
+  try {
+    if (currentSessionId) await saveCurrentSession();
+    const res = await fetch(`${API_URL}/sessions`, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ title: 'New Chat', userId: userId })
+    });
+    const data = await res.json();
+    setShowCodeCanvas(false);
+    setShowChatSidebar(false);
+    setShowDocumentPanel(false);
+    setShowTimeline(false);
+    setCanvasFiles([]);
+    setActiveCanvasFile('');
+    setMessages([]);
+    setTimelineNodes([]);
+    setBranches([]);
+    setDecisions([]);
+    setNextBranchNumber(1);
+    setCurrentBranchId('main');
+    setActiveRestoredNodeId(null);
+    lastNodeIdRef.current = null;
+    setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
+    setEditTitleValue('Notes');
+    setIsViewingHistory(false);
+    setSearchTerm('');
+    setTranscriptSegments([]);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    stopSpeaking();
+    await loadSessions();
+    await loadSession(data.sessionId);
+  } catch (error) { 
+    console.error('Failed to create session:', error); 
+  }
+};
 
   const deleteSession = async (sessionId: string) => {
     try {
