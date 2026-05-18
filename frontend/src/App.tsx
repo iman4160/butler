@@ -1215,9 +1215,13 @@ if (voiceResponseEnabled) {
       }
     }
     
-    if (data.length > 0 && !currentSessionId) { 
-      setCurrentSessionId(data[0].id); 
-      await loadSession(data[0].id); 
+    // ✅ FIX: Create a new session for new users instead of loading the first one
+    if (data.length === 0 && !currentSessionId) {
+      await createNewSession();
+    } else if (data.length > 0 && !currentSessionId) {
+      // For returning users, we could load their last session
+      // But for now, create a new one to ensure privacy
+      await createNewSession();
     }
   } catch (error) { 
     console.error('Failed to load sessions:', error); 

@@ -492,6 +492,10 @@ GUIDING PRINCIPLES (not rigid rules):
 
 8. NO METADATA - Never include timestamps, "last updated", or any breadcrumbs about when or how information was added. The document should feel like it always existed.
 
+9. When the AI suggests multiple possibilities, list them as "**Options Considered**" or "**Possibilities**"
+   - When user chooses or agrees to something, mark it as the primary decision and move the other options to a section at the bottom or remove them if they are no longer relevant
+   - When user rejects something, remove it
+
 CRITICAL: The document is a silent background process. Never reference it, never mention "notes" or "document" or "recording" in the output. Just return the updated notes as if they naturally evolved from the conversation.
 
 Return ONLY the updated markdown notes. No explanations, no metadata, no references to the document itself.`;
