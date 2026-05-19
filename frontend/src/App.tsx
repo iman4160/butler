@@ -1110,6 +1110,16 @@ const updateDocumentOnly = async (text: string) => {
 
 useEffect(() => {
   if (!voiceResponseEnabled) return;
+  if (isViewingHistory) {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setVoiceActivity('idle');
+    setIsListening(false);
+    return;
+  }
+  
   // Stop and cleanup if no mode is active
   if (!secretaryMode && !interactiveMode) {
     if (recognitionRef.current) {
@@ -1322,7 +1332,7 @@ useEffect(() => {
     if (eventSource) eventSource.close();
     if (janitorTimeoutRef.current) clearTimeout(janitorTimeoutRef.current);
   };
-}, [secretaryMode, interactiveMode, voiceResponseEnabled]);
+}, [secretaryMode, interactiveMode, voiceResponseEnabled, isViewingHistory]);
 
   const handleRealtimeUpdate = (data: any) => {
   console.log('📡 SSE Event received:', data.type, data);
@@ -1572,6 +1582,12 @@ useEffect(() => {
     return;
   }
   
+  // Check if this is the latest node in its branch
+  const branchNodes = timelineNodes.filter(n => n.branchId === node.branchId);
+  const isLatest = branchNodes.length === 0 || branchNodes.reduce((latest, current) => 
+    new Date(current.timestamp) > new Date(latest.timestamp) ? current : latest
+  ).id === node.id;
+  
   // Restore messages
   setMessages([...node.messagesSnapshot]);
   
@@ -1588,11 +1604,17 @@ useEffect(() => {
   }
   
   setCurrentBranchId(node.branchId);
-  setIsViewingHistory(true);  // Keep this - blocks chat while viewing history
+  
+  // ONLY block chat if this is NOT the latest node
+  setIsViewingHistory(!isLatest);
   setActiveRestoredNodeId(node.id);
   lastNodeIdRef.current = node.id;
   
-  addActivityToBackend(`⏪ Restored conversation from ${new Date(node.timestamp).toLocaleTimeString()}`, 'system');
+  if (!isLatest) {
+    addActivityToBackend(`⏪ Viewing past conversation from ${new Date(node.timestamp).toLocaleTimeString()} (chat blocked)`, 'system');
+  } else {
+    addActivityToBackend(`📋 Viewing latest conversation (chat enabled)`, 'system');
+  }
   
   setShowRestoreNotification(true);
   setTimeout(() => setShowRestoreNotification(false), 3000);
@@ -1706,19 +1728,16 @@ const branchFromNode = async (node: TimelineNode) => {
   const returnToCurrent = async () => {
   if (!currentSessionId) return;
 
-  // CRITICAL: Reset ALL history-related flags
+  console.log('🔓 Returning to current conversation...');
+  
+  // Reset history flags
   setIsViewingHistory(false);
   setActiveRestoredNodeId(null);
   
-  // Also reset any other blocking states
-  if (secretaryMode) {
-    // Don't clear secretary mode if active
-  }
-  
-  // Reload the session from scratch to get latest state
+  // Reload the session to get the latest state
   await loadSession(currentSessionId);
   
-  // Scroll to bottom to see latest messages
+  // Scroll to bottom
   if (messagesContainerRef.current) {
     setTimeout(() => {
       messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
@@ -1952,6 +1971,37 @@ const branchFromNode = async (node: TimelineNode) => {
             )}
           </div>
         </div>
+
+        {isViewingHistory && (
+  <div style={{
+    background: 'rgba(245, 196, 81, 0.15)',
+    border: '1px solid #F5C451',
+    borderRadius: '8px',
+    padding: '8px 12px',
+    marginBottom: '12px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    fontSize: '0.8rem'
+  }}>
+    <span>🔍 Viewing historical conversation point</span>
+    <button 
+      onClick={returnToCurrent}
+      style={{
+        background: '#F5C451',
+        color: '#000',
+        border: 'none',
+        padding: '6px 16px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        fontWeight: 'bold',
+        fontSize: '0.75rem'
+      }}
+    >
+      Return to Latest → 
+    </button>
+  </div>
+)}
 
         {secretaryMode && (
           <div className="transcript-panel">
