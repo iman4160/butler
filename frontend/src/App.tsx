@@ -492,27 +492,50 @@ const speakResponse = (text: string) => {
   utterance.onend = () => {
     console.log('🔊 AI finished speaking - restarting recognition');
     
-    // 🔴 Record when AI finished speaking (THIS IS THE FIX)
+    // Record when AI finished speaking
     (window as any).lastAISpeechEndTime = Date.now();
     
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
-    // Wait longer before restarting to let audio settle (1 second)
+    // CRITICAL: Re-initialize recognition after speaking
     setTimeout(() => {
-      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
+      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
+        // Stop any existing recognition
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.stop();
+            recognitionRef.current = null;
+          } catch (e) {}
+        }
+        
+        // Create new recognition instance
+        const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+        const newRecognition = new SpeechRecognition();
+        newRecognition.continuous = true;
+        newRecognition.interimResults = true;
+        newRecognition.lang = 'en-US';
+        
+        // Copy over the event handlers
+        newRecognition.onstart = recognitionRef.current?.onstart;
+        newRecognition.onend = recognitionRef.current?.onend;
+        newRecognition.onerror = recognitionRef.current?.onerror;
+        newRecognition.onresult = recognitionRef.current?.onresult;
+        
+        recognitionRef.current = newRecognition;
+        
         try {
-          console.log('🎤 Restarting recognition after AI speech');
           recognitionRef.current.start();
+          console.log('🎤 Recognition re-initialized and started after speech');
         } catch (e) {
           console.error('Failed to restart recognition:', e);
         }
       }
-    }, 1000);
+    }, 500);
   };
   
-  utterance.onerror = () => {
-    console.log('🔊 AI speech error');
+  utterance.onerror = (event) => {
+    console.log('🔊 AI speech error:', event.error);
     
     // Also record time on error
     (window as any).lastAISpeechEndTime = Date.now();
@@ -520,13 +543,24 @@ const speakResponse = (text: string) => {
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
+    // CRITICAL: Re-initialize recognition even on error
     setTimeout(() => {
-      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {}
+      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
+        // Re-initialize recognition
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.stop();
+            recognitionRef.current = null;
+          } catch (e) {}
+        }
+        
+        // Restart the recognition process
+        if (recognitionRef.current === null) {
+          // The useEffect will recreate recognition
+          window.dispatchEvent(new Event('resize')); // Force a re-render
+        }
       }
-    }, 1000);
+    }, 500);
   };
   
   window.speechSynthesis.speak(utterance);
@@ -792,9 +826,48 @@ const startPushToTalk = () => {
   
   // Set BOTH state and ref
   setIsPushToTalkActive(true);
-  isPushToTalkActiveRef.current = true;  // ← CRITICAL
+  isPushToTalkActiveRef.current = true;
   
   setVoiceActivity('listening');
+  
+  // CRITICAL: Make sure recognition is running
+  if (!recognitionRef.current) {
+    console.log('🎤 Recognition not running, re-initializing...');
+    // Force re-initialization
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+    
+    // Add basic handlers
+    recognitionRef.current.onstart = () => {
+      console.log('🎤 Recognition started');
+      setVoiceActivity('listening');
+      setIsListening(true);
+    };
+    
+    recognitionRef.current.onend = () => {
+      console.log('Recognition ended');
+      setVoiceActivity('idle');
+      setIsListening(false);
+    };
+    
+    recognitionRef.current.onerror = (event: any) => {
+      console.error('Recognition error:', event.error);
+    };
+  }
+  
+  try {
+    recognitionRef.current.start();
+    console.log('🎤 Recognition started for push-to-talk');
+  } catch (e: any) {
+    if (e.name === 'InvalidStateError') {
+      console.log('Recognition already running');
+    } else {
+      console.error('Error starting recognition:', e);
+    }
+  }
   
   if (pushToTalkTimeoutRef.current) {
     clearTimeout(pushToTalkTimeoutRef.current);
@@ -807,10 +880,11 @@ const stopPushToTalk = () => {
   
   // Set BOTH state and ref
   setIsPushToTalkActive(false);
-  isPushToTalkActiveRef.current = false;  // ← CRITICAL
+  isPushToTalkActiveRef.current = false;
   
   setVoiceActivity('idle');
   
+  // Don't stop recognition, just ignore results via the flag
   pushToTalkTimeoutRef.current = setTimeout(() => {
     pushToTalkTimeoutRef.current = null;
   }, 100);
