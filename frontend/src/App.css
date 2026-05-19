@@ -1388,11 +1388,6 @@ body {
   cursor: pointer;
 }
 
-.timeline-node-card:hover {
-  transform: translateX(4px);
-  background: rgba(167, 139, 250, 0.06);
-}
-
 .timeline-node-card.active {
   background: rgba(245, 196, 81, 0.05);
   border-left-width: 3px;
@@ -2682,7 +2677,6 @@ body {
 }
 
 .timeline-node-card:hover {
-  transform: translateX(4px);
   filter: brightness(1.05);
 }
 

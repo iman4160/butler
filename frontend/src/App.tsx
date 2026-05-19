@@ -758,6 +758,44 @@ const addActivityToBackend = async (action: string, agent: string = 'user') => {
   }
 };
 
+const deleteBranch = async (branchId: string) => {
+  if (branchId === 'main') {
+    addActivityToBackend(`⚠️ Cannot delete main branch`, 'system');
+    return;
+  }
+  
+  if (confirm(`Delete branch "${getBranchName(branchId)}"? This cannot be undone.`)) {
+    // Remove branch from state
+    setBranches(prev => prev.filter(b => b.id !== branchId));
+    
+    // If currently on this branch, switch to main
+    if (currentBranchId === branchId) {
+      setCurrentBranchId('main');
+      // Reload main branch document
+      const mainBranch = branches.find(b => b.id === 'main');
+      if (mainBranch?.document) {
+        setLivingDocument(mainBranch.document);
+      }
+    }
+    
+    // Remove all timeline nodes belonging to this branch
+    setTimelineNodes(prev => prev.filter(node => node.branchId !== branchId));
+    
+    // Save to backend
+    if (currentSessionId) {
+      const updatedBranches = branches.filter(b => b.id !== branchId);
+      const updatedTimelineNodes = timelineNodes.filter(node => node.branchId !== branchId);
+      await fetch(`${API_URL}/sessions/${currentSessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branches: updatedBranches, timelineNodes: updatedTimelineNodes })
+      });
+    }
+    
+    addActivityToBackend(`🗑️ Deleted branch: ${getBranchName(branchId)}`, 'system');
+  }
+};
+
  const addCodeToCanvas = (code: string, language: string) => {
     let filename = 'code.txt', icon = '📄';
     if (language === 'python' || language === 'py') { filename = 'script.py'; icon = '🐍'; }
@@ -1571,10 +1609,6 @@ const branchFromNode = async (node: TimelineNode) => {
   setIsViewingHistory(false);
   setActiveRestoredNodeId(null);
   
-  // CRITICAL: Reset viewing history flag FIRST
-  setIsViewingHistory(false);
-  setActiveRestoredNodeId(null);
-  
   const branchNumber = nextBranchNumber;
   const styleIndex = ((branchNumber - 1) % (BRANCH_STYLES.length - 1)) + 1;
   const style = BRANCH_STYLES[styleIndex];
@@ -1999,7 +2033,7 @@ const branchFromNode = async (node: TimelineNode) => {
                   : (secretaryMode ? "Secretary mode active - speak naturally" : "Type your message...")
               }
               onKeyPress={handleKeyPress}
-              ddisabled={secretaryMode || isViewingHistory}
+              disabled={secretaryMode || isViewingHistory}
             />
             <div className="voice-controls">
               <button
@@ -2087,13 +2121,44 @@ const branchFromNode = async (node: TimelineNode) => {
           <div className="timeline-branch-list" ref={timelineListRef}>
             {nodesByBranch.get('main') && nodesByBranch.get('main')!.length > 0 && (
               <div className="timeline-branch-section">
-                <div className="timeline-branch-header" style={{ borderBottomColor: BRANCH_STYLES[0].color, backgroundColor: `${BRANCH_STYLES[0].color}10` }} onClick={() => toggleBranchCollapse('main')}>
-                  <span className="branch-toggle"><ChevronDown size={14} /></span>
-                  <div className="branch-icon" style={{ backgroundColor: BRANCH_STYLES[0].color }}>{BRANCH_STYLES[0].icon}</div>
-                  <span className="branch-name" style={{ color: BRANCH_STYLES[0].color, cursor: 'pointer' }} onDoubleClick={() => { setRenamingBranchId('main'); setBranchRenameValue('Main Branch'); }} title="Double-click to rename">
-                    Main Branch<Edit3 size={10} style={{ marginLeft: '6px', opacity: 0.5 }} />
-                  </span>
-                  <span className="branch-count">{nodesByBranch.get('main')!.length} messages</span>
+                <div className="timeline-branch-header" style={{ borderBottomColor: branch.color, backgroundColor: `${branch.color}10` }} onClick={() => toggleBranchCollapse(branch.id)}>
+                  <span className="branch-toggle">{branch.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</span>
+                  <div className="branch-icon" style={{ backgroundColor: branch.color }}>{branch.icon}</div>
+                  {renamingBranchId === branch.id ? (
+                    <input type="text" value={branchRenameValue} onChange={(e) => setBranchRenameValue(e.target.value)} onBlur={() => { renameBranch(branch.id, branchRenameValue); setRenamingBranchId(null); setBranchRenameValue(''); }} onKeyPress={(e) => { if (e.key === 'Enter') { renameBranch(branch.id, branchRenameValue); setRenamingBranchId(null); setBranchRenameValue(''); } }} autoFocus className="branch-name-input" style={{ color: branch.color }} />
+                  ) : (
+                    <span className="branch-name" style={{ color: branch.color, cursor: 'pointer' }} onDoubleClick={() => { setRenamingBranchId(branch.id); setBranchRenameValue(branch.name); }} title="Double-click to rename">
+                      {branch.name}<Edit3 size={10} style={{ marginLeft: '6px', opacity: 0.5 }} />
+                    </span>
+                  )}
+                  <span className="branch-count">{branchNodes.length} messages</span>
+                  
+                  {/* ✅ ADD DELETE BUTTON HERE (only for non-main branches) */}
+                  {branch.id !== 'main' && (
+                    <button
+                      className="branch-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteBranch(branch.id);
+                      }}
+                      title="Delete branch"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#ef4444',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        marginLeft: '8px',
+                        borderRadius: '4px',
+                        opacity: 0.6,
+                        transition: 'opacity 0.2s'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                 </div>
                 <div className="timeline-branch-content">
                   {nodesByBranch.get('main')!.map(node => renderTimelineNode(node, BRANCH_STYLES[0], 'Main Branch'))}
