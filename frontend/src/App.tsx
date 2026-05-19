@@ -2167,8 +2167,6 @@ const branchFromNode = async (node: TimelineNode) => {
                 </div>
               )}
             </div>
-            <button className="upload-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>📎</button>
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} />
             <button
               className="send-btn"
               onClick={() => {
