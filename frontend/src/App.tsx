@@ -726,21 +726,28 @@ const loadSession = async (sessionId: string) => {
 };
 
 const buildMessageTree = () => {
-  // First, group nodes by branch
+  // First, group nodes by branch, filtering by search term
   const branchGroups: Map<string, TimelineNode[]> = new Map();
   
-  // Add main branch nodes
-  const mainNodes = timelineNodes.filter(node => node.branchId === 'main');
-  branchGroups.set('main', mainNodes.sort((a, b) => 
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  ));
+  // Helper to check if a node matches search
+  const matchesSearch = (node: TimelineNode) => {
+    if (!searchTerm) return true;
+    return node.userMessage.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           node.assistantMessage.toLowerCase().includes(searchTerm.toLowerCase());
+  };
   
-  // Add other branch nodes
+  // Add main branch nodes with search filter
+  const mainNodes = timelineNodes
+    .filter(node => node.branchId === 'main' && matchesSearch(node))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  branchGroups.set('main', mainNodes);
+  
+  // Add other branch nodes with search filter
   branches.forEach(branch => {
-    const branchNodes = timelineNodes.filter(node => node.branchId === branch.id);
-    branchGroups.set(branch.id, branchNodes.sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    ));
+    const branchNodes = timelineNodes
+      .filter(node => node.branchId === branch.id && matchesSearch(node))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    branchGroups.set(branch.id, branchNodes);
   });
   
   return branchGroups;
@@ -2126,7 +2133,7 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
           whiteSpace: 'nowrap',
           marginBottom: '10px'
         }}>
-          "{node.userMessage.slice(0, 70)}{node.userMessage.length > 70 ? '...' : ''}"
+          {highlightSearchTerm(node.userMessage.slice(0, 70))}{node.userMessage.length > 70 ? '...' : ''}
         </div>
       </div>
       
@@ -2195,6 +2202,17 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
 
   const getAgentIcon = (agent?: ActivityLog['agent']) => { switch (agent) { case 'user': return '👤'; case 'fast-brain': return '🧠'; case 'janitor': return '🧹'; default: return '🤖'; } };
   const getAgentColor = (agent?: ActivityLog['agent']) => { switch (agent) { case 'user': return '#60a5fa'; case 'fast-brain': return '#10a37f'; case 'janitor': return '#f59e0b'; default: return '#64748b'; } };
+
+  const highlightSearchTerm = (text: string) => {
+  if (!searchTerm) return text;
+  
+  const parts = text.split(new RegExp(`(${searchTerm})`, 'gi'));
+  return parts.map((part, i) => 
+    part.toLowerCase() === searchTerm.toLowerCase() 
+      ? <span key={i} style={{ backgroundColor: '#F5C451', color: '#000', fontWeight: 'bold' }}>{part}</span>
+      : part
+  );
+};
 
   return (
   <div className={`app ${secretaryMode ? 'secretary-active' : ''}`}>
