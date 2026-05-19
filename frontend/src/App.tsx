@@ -989,6 +989,7 @@ const sendStreamingMessage = async (message: string) => {
         }
       }
     }
+    
     // Only speak if we're in a voice mode (secretary or interactive) AND not muted
     if (fullResponse.trim() && (secretaryMode || interactiveMode)) {      
       if (!isMuted) {
@@ -1004,7 +1005,7 @@ const sendStreamingMessage = async (message: string) => {
     // Process AI response: Update document AND extract code blocks
     if (fullResponse.trim()) {
       // Update document with AI response
-      triggerLiveJanitor(fullResponse);
+      await triggerLiveJanitor(fullResponse);
       
       // Extract code blocks and add to canvas
       const codeBlocks = extractCodeBlocks(fullResponse);
@@ -1018,47 +1019,64 @@ const sendStreamingMessage = async (message: string) => {
     
     addActivityToBackend(`🤖 Butler: Responded to "${message.slice(0, 50)}..."`, 'fast-brain');
     
-    // ===== Create timeline node with the FINAL state =====
-    setTimeout(() => {
+    // ===== IMPORTANT: Wait for document to update before saving timeline node =====
+    // Give the janitor time to process and update the document
+    setTimeout(async () => {
+      // Get the FINAL state after all updates (wait a bit for the document to update)
       let finalMessages: Message[] = [];
       let finalDocument: LivingDocumentType = { content: '', lastUpdated: '', title: 'Notes' };
       
+      // Get current messages
       setMessages(prev => {
         finalMessages = [...prev];
         return prev;
       });
+      
+      // Get current document with a small delay to ensure janitor finished
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       setLivingDocument(prev => {
         finalDocument = { ...prev };
         return prev;
       });
       
-      setTimeout(() => {
-        console.log('📝 CREATING TIMELINE NODE FOR:', message.slice(0, 40));
-        console.log('  Messages count:', finalMessages.length);
-        console.log('  Document title:', finalDocument.title);
+      console.log('📝 CREATING TIMELINE NODE FOR:', message.slice(0, 40));
+      console.log('  Messages count:', finalMessages.length);
+      console.log('  Document title:', finalDocument.title);
+      console.log('  Document content length:', finalDocument.content?.length || 0);
+      
+      if (finalMessages.length > 0) {
+        const newNode: TimelineNode = {
+          id: Date.now().toString(),
+          userMessage: message,
+          assistantMessage: fullResponse,
+          timestamp: new Date().toISOString(),
+          documentContent: finalDocument.content || '',
+          documentSnapshot: JSON.parse(JSON.stringify(finalDocument)), // Deep copy!
+          messagesSnapshot: JSON.parse(JSON.stringify(finalMessages)),
+          parentId: lastNodeIdRef.current,
+          branchId: currentBranchId
+        };
         
-        if (finalMessages.length > 0) {
-          const newNode: TimelineNode = {
-            id: Date.now().toString(),
-            userMessage: message,
-            assistantMessage: fullResponse,
-            timestamp: new Date().toISOString(),
-            documentContent: finalDocument.content || '',
-            documentSnapshot: JSON.parse(JSON.stringify(finalDocument)),
-            messagesSnapshot: JSON.parse(JSON.stringify(finalMessages)),
-            parentId: lastNodeIdRef.current,
-            branchId: currentBranchId
-          };
-          
-          setTimelineNodes(prev => {
-            console.log('✅ Timeline node added. Total nodes:', prev.length + 1);
-            return [...prev, newNode];
+        setTimelineNodes(prev => {
+          console.log('✅ Timeline node added. Total nodes:', prev.length + 1);
+          return [...prev, newNode];
+        });
+        lastNodeIdRef.current = newNode.id;
+        
+        // Save to backend immediately
+        if (currentSessionId) {
+          const updatedTimelineNodes = [...timelineNodes, newNode];
+          await fetch(`${API_URL}/sessions/${currentSessionId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timelineNodes: updatedTimelineNodes })
           });
-          lastNodeIdRef.current = newNode.id;
         }
-      }, 100);
-    }, 100);
+      }
+    }, 800); // Wait 800ms for janitor to complete
+    
+
     
   } catch (error) {
     if ((error as Error).name === 'AbortError') {
