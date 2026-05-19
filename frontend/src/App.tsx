@@ -438,21 +438,18 @@ const speakResponse = (text: string) => {
   if (!voiceResponseEnabled) return;
   if (shouldStopRef.current) return;
   
-  // 🔴 NEW: Stop all microphone tracks completely
-  if (mediaStreamRef.current) {
-    console.log('🎤 Stopping all microphone tracks to prevent echo');
-    mediaStreamRef.current.getTracks().forEach(track => {
-      track.stop();
-    });
-    mediaStreamRef.current = null;
-  }
-  
   // CRITICAL: Force stop recognition BEFORE speaking to prevent echo
   if (recognitionRef.current) {
     try {
       console.log('🎤 FORCE stopping recognition before AI speaks');
       recognitionRef.current.stop();
-      recognitionRef.current = null; // Clear it completely
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.abort?.();
+          } catch (e) {}
+        }
+      }, 50);
     } catch (e) {
       console.log('Recognition stop error:', e);
     }
@@ -462,45 +459,75 @@ const speakResponse = (text: string) => {
   setIsSpeaking(true);
   setVoiceActivity('speaking');
   
-  // ... rest of speakResponse (cleanText, utterance, etc)
+  let cleanText = text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/[`_~>]/g, '');
+  
+  if (cleanText.length > 400) {
+    cleanText = cleanText.slice(0, 400) + '...';
+  }
+  
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  utterance.rate = 0.85;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.8;
+  
+  if (selectedVoice) {
+    utterance.voice = selectedVoice;
+  }
+  
+  utterance.onstart = () => {
+    console.log('🔊 AI started speaking - recognition stopped');
+    setIsSpeaking(true);
+    setVoiceActivity('speaking');
+  };
   
   utterance.onend = () => {
     console.log('🔊 AI finished speaking - restarting recognition');
+    
+    // 🔴 Record when AI finished speaking (THIS IS THE FIX)
+    (window as any).lastAISpeechEndTime = Date.now();
+    
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
-    // 🔴 NEW: Re-initialize microphone after speaking
+    // Wait longer before restarting to let audio settle (1 second)
     setTimeout(() => {
-      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
-        // Re-request microphone
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          navigator.mediaDevices.getUserMedia({ audio: true })
-            .then(stream => {
-              mediaStreamRef.current = stream;
-              console.log('🎤 Microphone re-initialized');
-            })
-            .catch(err => console.log('Microphone re-init error:', err));
-        }
-        
-        // Restart recognition
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.start();
-          } catch (e) {}
-        } else {
-          // Re-create recognition
-          const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-          recognitionRef.current = new SpeechRecognition();
-          recognitionRef.current.continuous = true;
-          recognitionRef.current.interimResults = true;
-          recognitionRef.current.lang = 'en-US';
-          // Re-add event handlers...
+      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
+        try {
+          console.log('🎤 Restarting recognition after AI speech');
           recognitionRef.current.start();
+        } catch (e) {
+          console.error('Failed to restart recognition:', e);
         }
       }
-    }, 500);
+    }, 1000);
   };
-}
+  
+  utterance.onerror = () => {
+    console.log('🔊 AI speech error');
+    
+    // Also record time on error
+    (window as any).lastAISpeechEndTime = Date.now();
+    
+    setIsSpeaking(false);
+    setVoiceActivity('listening');
+    
+    setTimeout(() => {
+      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
+        try {
+          recognitionRef.current.start();
+        } catch (e) {}
+      }
+    }, 1000);
+  };
+  
+  window.speechSynthesis.speak(utterance);
+};
 
 const stopSpeaking = () => {
   if (isSpeaking) { 
@@ -1266,54 +1293,44 @@ useEffect(() => {
   }
   setAudioLevel(Math.random() * 100);
   
-  // Ignore very short transcripts (likely ambient noise or AI echo fragments)
+  // Ignore very short transcripts (likely ambient noise)
   if (finalTranscript && finalTranscript.length < 3) {
     console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
     return;
   }
   
-  // 🔴 NEW: Check if this sounds like AI reading its own response
-  // Common AI response patterns that shouldn't be transcribed
-  const aiResponsePatterns = [
-    /\b(here'?s|here is)\s+(a|an)\s+(code|example|function|component)\b/i,
-    /\b(i'?ll|i will)\s+(show|explain|demonstrate|help)\b/i,
-    /\b(let me)\s+(show|explain|help|create)\b/i,
-    /\b(the\s+code\s+below|the\s+following)\b/i,
-    /\b(you\s+can\s+use|you\s+can\s+create)\b/i,
-    /\b(first|second|third|finally|additionally|moreover)\b/i,
-    /\b(```)/,  // Code block indicator
-    /^\s*(sure|absolutely|of course|yes|no)\s*,?\s*(here|let me|i'll)/i,
-  ];
+  // 🔴 ONLY filter echo if AI just finished speaking (within last 2 seconds)
+  const now = Date.now();
+  const timeSinceAISpoke = now - (window as any).lastAISpeechEndTime || 9999;
+  const isInEchoWindow = timeSinceAISpoke < 2000; // 2 second window after AI speaks
   
-  // Check if transcript matches AI response patterns
-  let isAIResponse = false;
-  for (const pattern of aiResponsePatterns) {
-    if (pattern.test(finalTranscript)) {
-      isAIResponse = true;
-      console.log('🎤 IGNORING - Matched AI response pattern:', pattern);
-      break;
+  if (isInEchoWindow && finalTranscript) {
+    // Check if this sounds like AI echo (only during the echo window)
+    const echoPatterns = [
+      /\b(here'?s|here is)\s+(a|an)\s+(code|example)\b/i,
+      /\b(i'?ll|i will)\s+(show|explain)\b/i,
+      /\b(let me)\s+(show|explain)\b/i,
+      /```/,  // Code block indicator
+    ];
+    
+    let isEcho = false;
+    for (const pattern of echoPatterns) {
+      if (pattern.test(finalTranscript)) {
+        isEcho = true;
+        console.log('🎤 IGNORING - Echo detected within 2 seconds of AI speech:', finalTranscript.slice(0, 50));
+        break;
+      }
     }
-  }
-  
-  // Also ignore if transcript is very long (AI responses are typically longer)
-  if (!isAIResponse && finalTranscript.length > 150) {
-    isAIResponse = true;
-    console.log('🎤 IGNORING - Transcript too long (likely AI echo):', finalTranscript.length, 'chars');
-  }
-  
-  // Check for repetitive phrases (common in AI speech)
-  if (!isAIResponse) {
-    const words = finalTranscript.split(' ');
-    const uniqueWords = new Set(words);
-    if (uniqueWords.size < words.length * 0.3) {
-      isAIResponse = true;
-      console.log('🎤 IGNORING - High repetition detected (likely AI echo)');
+    
+    // Also ignore if very long during echo window (AI responses are long)
+    if (!isEcho && finalTranscript.length > 120) {
+      isEcho = true;
+      console.log('🎤 IGNORING - Long transcript within echo window');
     }
-  }
-  
-  if (isAIResponse) {
-    console.log('🎤 IGNORING - This appears to be AI echo, not user speech:', finalTranscript.slice(0, 100));
-    return;
+    
+    if (isEcho) {
+      return; // Ignore this echo
+    }
   }
   
   if (finalTranscript) {
