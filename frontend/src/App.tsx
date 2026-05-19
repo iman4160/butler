@@ -1550,6 +1550,9 @@ useEffect(() => {
     setIsViewingHistory(false);
     setActiveRestoredNodeId(null);
     
+    // 🔴 ADD THIS LINE - Collapse the chat sidebar when creating new chat
+    setShowChatSidebar(false);
+    
     console.log('🆕 Creating new session...');
     const res = await fetch(`${API_URL}/sessions`, {
       method: 'POST',
