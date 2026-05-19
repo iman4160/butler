@@ -1189,7 +1189,6 @@ const updateDocumentOnly = async (text: string) => {
 }
 
 useEffect(() => {
-  if (!voiceResponseEnabled) return;
   if (isViewingHistory) {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
