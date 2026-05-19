@@ -302,7 +302,7 @@ function App() {
   const isMutedRef = useRef(false);
 
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
-
+  const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(['main']));
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [isMuted, setIsMuted] = useState(false);
@@ -326,6 +326,17 @@ function App() {
   return id;
 });
 
+const toggleBranchExpansion = (branchId: string) => {
+  setExpandedBranches(prev => {
+    const newSet = new Set(prev);
+    if (newSet.has(branchId)) {
+      newSet.delete(branchId);
+    } else {
+      newSet.add(branchId);
+    }
+    return newSet;
+  });
+};
 
   // Intent Detection
   const detectIntent = (text: string): { intent: 'brainstorming' | 'question' | 'command' | 'direct_address' | 'unknown', confidence: number } => {
@@ -712,6 +723,27 @@ const loadSession = async (sessionId: string) => {
     console.error('Failed to save session:', error);
     return false;
   }
+};
+
+const buildMessageTree = () => {
+  // First, group nodes by branch
+  const branchGroups: Map<string, TimelineNode[]> = new Map();
+  
+  // Add main branch nodes
+  const mainNodes = timelineNodes.filter(node => node.branchId === 'main');
+  branchGroups.set('main', mainNodes.sort((a, b) => 
+    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  ));
+  
+  // Add other branch nodes
+  branches.forEach(branch => {
+    const branchNodes = timelineNodes.filter(node => node.branchId === branch.id);
+    branchGroups.set(branch.id, branchNodes.sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    ));
+  });
+  
+  return branchGroups;
 };
 
   // Timeline Functions
@@ -1893,33 +1925,203 @@ const branchFromNode = async (node: TimelineNode) => {
   const matchesSearch = (text: string) => { if (!searchTerm) return true; return text.toLowerCase().includes(searchTerm.toLowerCase()); };
   const nodesByBranch = getNodesByBranch();
 
-  const renderTimelineNode = (node: TimelineNode, branchStyle: any, branchName: string) => {
-    const parentInfo = getParentInfo(node);
-    const isHighlighted = searchTerm && matchesSearch(node.userMessage);
-    const isActive = activeRestoredNodeId === node.id;
-    const isHovered = hoveredNodeId === node.id;
-    const isCopied = copiedNodeId === node.id;
-    const getBreadcrumb = () => {
-      const branchNames: string[] = [];
-      let currentNode: TimelineNode | undefined = node;
-      while (currentNode) {
-        const currentBranchName = getBranchName(currentNode.branchId);
-        if (!branchNames.includes(currentBranchName)) branchNames.unshift(currentBranchName);
-        if (!currentNode.parentId) break;
-        currentNode = timelineNodes.find(n => n.id === currentNode?.parentId);
-      }
-      return branchNames;
-    };
-    const breadcrumbPath = getBreadcrumb();
-    return ( <div key={node.id} className={`timeline-node-card ${isActive ? 'active' : ''} ${isHighlighted ? 'highlighted' : ''}`} style={{ borderLeftColor: branchStyle.color, backgroundColor: branchStyle.bgTint, boxShadow: isActive ? `0 0 0 2px ${branchStyle.color}40` : 'none' }} onMouseEnter={() => setHoveredNodeId(node.id)} onMouseLeave={() => setHoveredNodeId(null)}>
-      <div className="timeline-node-header"><div className="timeline-node-badge" style={{ backgroundColor: branchStyle.color }}>{branchStyle.icon}</div><div className="timeline-node-time">{new Date(node.timestamp).toLocaleTimeString()}</div><div className="timeline-node-actions"><button className="timeline-node-action restore-btn" onClick={() => restoreFromNode(node)} title="View this conversation state"><Eye size={12} /></button><button className="timeline-node-action branch-btn" onClick={() => branchFromNode(node)} title="Create new branch from here"><GitBranch size={12} /></button><button className="timeline-node-action copy-btn" onClick={() => copyNodeMessage(node.userMessage, node.id)} title="Copy message">{isCopied ? <Check size={12} /> : <Copy size={12} />}</button></div></div>
-      <div className="timeline-node-message" onClick={() => restoreFromNode(node)}>"{node.userMessage}"</div>
-      {breadcrumbPath.length > 0 && <div className="timeline-node-breadcrumb" style={{ color: branchStyle.breadcrumbColor }}><MapPin size={10} /><span>{breadcrumbPath.join(' → ')}</span></div>}
-      {parentInfo && parentInfo.branchId !== node.branchId && <div className="timeline-node-connection" style={{ borderTopColor: `${branchStyle.color}40` }}><Link size={10} style={{ color: branchStyle.color }} /><span><strong>Branched from:</strong> "{parentInfo.message.slice(0, 60)}..." <span style={{ color: branchStyle.color }}> in {parentInfo.branchName}</span></span></div>}
-      {node.assistantMessage && <div className="timeline-node-preview"><span className="preview-label" style={{ color: branchStyle.color }}>Response:</span>{node.assistantMessage.slice(0, 80)}...</div>}
-      {isHovered && <div className="timeline-node-tooltip" style={{ borderTopColor: branchStyle.color }}><div className="tooltip-content"><strong style={{ color: branchStyle.color }}>Full message:</strong><p>{node.userMessage}</p>{node.assistantMessage && <><strong style={{ color: branchStyle.color }}>Response preview:</strong><p>{node.assistantMessage.slice(0, 150)}...</p></>}<small>Click restore to view • Branch to create new path</small></div></div>}
-    </div> );
+  const renderBranchGroup = (branchId: string, branchNodes: TimelineNode[], level: number = 0) => {
+  const branch = branches.find(b => b.id === branchId);
+  const isMain = branchId === 'main';
+  const branchStyle = isMain ? BRANCH_STYLES[0] : {
+    color: branch?.color || BRANCH_STYLES[0].color,
+    bgTint: branch?.bgTint || BRANCH_STYLES[0].bgTint,
+    icon: branch?.icon || BRANCH_STYLES[0].icon,
+    breadcrumbColor: branch?.breadcrumbColor || BRANCH_STYLES[0].breadcrumbColor,
+    name: branch?.name || 'Branch'
   };
+  
+  const isExpanded = expandedBranches.has(branchId);
+  const messageCount = branchNodes.length;
+  
+  // Find where branches start from this branch
+  const branchPoints = timelineNodes.filter(node => 
+    node.parentId && node.branchId !== node.parentId
+  );
+  
+  return (
+    <div key={branchId} className="timeline-branch-group" style={{ marginLeft: level * 16 }}>
+      {/* Branch Header - Collapsible */}
+      <div 
+        className="timeline-branch-header-collapsible"
+        onClick={() => toggleBranchExpansion(branchId)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 12px',
+          marginTop: level > 0 ? '8px' : '0',
+          marginBottom: '8px',
+          backgroundColor: `${branchStyle.color}10`,
+          borderRadius: '6px',
+          cursor: 'pointer',
+          borderLeft: `3px solid ${branchStyle.color}`,
+          userSelect: 'none'
+        }}
+      >
+        <span style={{ fontSize: '12px', color: branchStyle.color }}>
+          {isExpanded ? '▼' : '▶'}
+        </span>
+        <span className="branch-icon" style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
+        <span className="branch-name" style={{ color: branchStyle.color, fontWeight: 'bold', flex: 1 }}>
+          {isMain ? 'Main Branch' : branchStyle.name}
+        </span>
+        <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
+          {messageCount} {messageCount === 1 ? 'message' : 'messages'}
+        </span>
+      </div>
+      
+      {/* Branch Content - Only show if expanded */}
+      {isExpanded && (
+        <div className="timeline-branch-content" style={{ marginLeft: '16px' }}>
+          {branchNodes.map((node, idx) => {
+            // Check if this node has child branches
+            const childBranches = branches.filter(b => {
+              const hasConnection = timelineNodes.some(n => 
+                n.parentId === node.id && n.branchId === b.id
+              );
+              return hasConnection;
+            });
+            
+            const isLastNode = idx === branchNodes.length - 1;
+            
+            return (
+              <div key={node.id} style={{ position: 'relative' }}>
+                {/* Vertical connector line */}
+                {!isLastNode && (
+                  <div style={{
+                    position: 'absolute',
+                    left: '-8px',
+                    top: '0',
+                    bottom: '0',
+                    width: '2px',
+                    backgroundColor: `${branchStyle.color}30`,
+                  }} />
+                )}
+                
+                {/* The message node */}
+                {renderTreeNode(node, branchStyle, isLastNode)}
+                
+                {/* Child branches (nested) */}
+                {childBranches.map(childBranch => {
+                  const childNodes = timelineNodes.filter(n => n.branchId === childBranch.id);
+                  const branchConnectionNode = timelineNodes.find(n => 
+                    n.parentId === node.id && n.branchId === childBranch.id
+                  );
+                  
+                  return (
+                    <div key={childBranch.id} style={{ position: 'relative', marginTop: '8px' }}>
+                      {/* Branch connection indicator */}
+                      <div style={{
+                        position: 'absolute',
+                        left: '-8px',
+                        top: '-12px',
+                        width: '16px',
+                        height: '24px',
+                        borderLeft: `2px dashed ${childBranch.color}`,
+                        borderBottom: `2px dashed ${childBranch.color}`,
+                        borderBottomLeftRadius: '8px'
+                      }} />
+                      {renderBranchGroup(childBranch.id, childNodes, level + 1)}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolean) => {
+  const isActive = activeRestoredNodeId === node.id;
+  const isHovered = hoveredNodeId === node.id;
+  const isCopied = copiedNodeId === node.id;
+  
+  return (
+    <div 
+      className={`timeline-node-card ${isActive ? 'active' : ''}`}
+      style={{ 
+        marginBottom: '8px',
+        marginLeft: '16px',
+        backgroundColor: branchStyle.bgTint,
+        borderLeft: `3px solid ${branchStyle.color}`,
+        borderRadius: '6px',
+        padding: '8px 12px',
+        position: 'relative',
+        cursor: 'pointer'
+      }}
+      onMouseEnter={() => setHoveredNodeId(node.id)}
+      onMouseLeave={() => setHoveredNodeId(null)}
+      onClick={() => restoreFromNode(node)}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
+          <span style={{ fontSize: '10px', opacity: 0.6 }}>
+            {new Date(node.timestamp).toLocaleTimeString()}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button 
+            className="timeline-node-action branch-btn"
+            onClick={(e) => { e.stopPropagation(); branchFromNode(node); }}
+            title="Create new branch from here"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
+          >
+            <GitBranch size={10} />
+          </button>
+          <button 
+            className="timeline-node-action copy-btn"
+            onClick={(e) => { e.stopPropagation(); copyNodeMessage(node.userMessage, node.id); }}
+            title="Copy message"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
+          >
+            {isCopied ? <Check size={10} /> : <Copy size={10} />}
+          </button>
+        </div>
+      </div>
+      <div style={{ 
+        fontSize: '12px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      }}>
+        "{node.userMessage.slice(0, 60)}{node.userMessage.length > 60 ? '...' : ''}"
+      </div>
+      {isHovered && (
+        <div style={{
+          position: 'absolute',
+          bottom: '100%',
+          left: '0',
+          backgroundColor: '#1a1a1a',
+          border: `1px solid ${branchStyle.color}`,
+          borderRadius: '4px',
+          padding: '8px',
+          zIndex: 1000,
+          width: '250px',
+          fontSize: '11px',
+          pointerEvents: 'none'
+        }}>
+          <strong>{node.userMessage}</strong>
+          {node.assistantMessage && (
+            <>
+              <div style={{ marginTop: '4px', fontSize: '10px', opacity: 0.7 }}>Response:</div>
+              <div>{node.assistantMessage.slice(0, 100)}...</div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
   const getAgentIcon = (agent?: ActivityLog['agent']) => { switch (agent) { case 'user': return '👤'; case 'fast-brain': return '🧠'; case 'janitor': return '🧹'; default: return '🤖'; } };
   const getAgentColor = (agent?: ActivityLog['agent']) => { switch (agent) { case 'user': return '#60a5fa'; case 'fast-brain': return '#10a37f'; case 'janitor': return '#f59e0b'; default: return '#64748b'; } };
@@ -2202,78 +2404,23 @@ const branchFromNode = async (node: TimelineNode) => {
             <button onClick={() => setShowTimeline(false)}>✕</button>
           </div>
           <div className="timeline-branch-list" ref={timelineListRef}>
-            {nodesByBranch.get('main') && nodesByBranch.get('main')!.length > 0 && (
-            <div className="timeline-branch-section">
-              <div className="timeline-branch-header" style={{ borderBottomColor: BRANCH_STYLES[0].color, backgroundColor: `${BRANCH_STYLES[0].color}10` }} onClick={() => toggleBranchCollapse('main')}>
-                <span className="branch-toggle"><ChevronDown size={14} /></span>
-                <div className="branch-icon" style={{ backgroundColor: BRANCH_STYLES[0].color }}>{BRANCH_STYLES[0].icon}</div>
-                <span className="branch-name" style={{ color: BRANCH_STYLES[0].color, cursor: 'pointer' }} onDoubleClick={() => { setRenamingBranchId('main'); setBranchRenameValue('Main Branch'); }} title="Double-click to rename">
-                  Main Branch<Edit3 size={10} style={{ marginLeft: '6px', opacity: 0.5 }} />
-                </span>
-                <span className="branch-count">{nodesByBranch.get('main')!.length} messages</span>
-              </div>
-              <div className="timeline-branch-content">
-                {nodesByBranch.get('main')!.map(node => renderTimelineNode(node, BRANCH_STYLES[0], 'Main Branch'))}
-              </div>
-            </div>
-)}
-            {branches.filter(b => b.id !== 'main').map(branch => {
-  const branchNodes = nodesByBranch.get(branch.id) || [];
-  if (branchNodes.length === 0) return null;
-  const branchStyle = { color: branch.color, bgTint: branch.bgTint, icon: branch.icon, breadcrumbColor: branch.breadcrumbColor, name: branch.name };
-  return (
-    <div key={branch.id} className="timeline-branch-section">
-      <div className="timeline-branch-header" style={{ borderBottomColor: branch.color, backgroundColor: `${branch.color}10` }} onClick={() => toggleBranchCollapse(branch.id)}>
-        <span className="branch-toggle">{branch.collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</span>
-        <div className="branch-icon" style={{ backgroundColor: branch.color }}>{branch.icon}</div>
-        {renamingBranchId === branch.id ? (
-          <input type="text" value={branchRenameValue} onChange={(e) => setBranchRenameValue(e.target.value)} onBlur={() => { renameBranch(branch.id, branchRenameValue); setRenamingBranchId(null); setBranchRenameValue(''); }} onKeyPress={(e) => { if (e.key === 'Enter') { renameBranch(branch.id, branchRenameValue); setRenamingBranchId(null); setBranchRenameValue(''); } }} autoFocus className="branch-name-input" style={{ color: branch.color }} />
-        ) : (
-          <span className="branch-name" style={{ color: branch.color, cursor: 'pointer' }} onDoubleClick={() => { setRenamingBranchId(branch.id); setBranchRenameValue(branch.name); }} title="Double-click to rename">
-            {branch.name}<Edit3 size={10} style={{ marginLeft: '6px', opacity: 0.5 }} />
-          </span>
-        )}
-        <span className="branch-count">{branchNodes.length} messages</span>
-        
-        {/* ✅ ADD DELETE BUTTON HERE */}
-        <button
-          className="branch-delete-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            deleteBranch(branch.id);
-          }}
-          title="Delete branch"
-          style={{
-            background: 'none',
-            border: 'none',
-            color: '#ef4444',
-            cursor: 'pointer',
-            padding: '4px',
-            marginLeft: '8px',
-            borderRadius: '4px',
-            opacity: 0.6,
-            transition: 'opacity 0.2s'
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
-        >
-          <Trash2 size={12} />
-        </button>
-      </div>
-      {!branch.collapsed && (
-        <div className="timeline-branch-content">
-          {branchNodes.map(node => renderTimelineNode(node, branchStyle, branch.name))}
-        </div>
-      )}
-    </div>
-  );
-})}
-            {timelineNodes.length === 0 && (
-              <div className="timeline-empty">
-                <p>No timeline entries yet.</p>
-                <small>Start a conversation to see your history here!</small>
-              </div>
-            )}
+            {(() => {
+              const branchGroups = buildMessageTree();
+              
+              // Render main branch first
+              const mainNodes = branchGroups.get('main') || [];
+              if (mainNodes.length > 0) {
+                return renderBranchGroup('main', mainNodes, 0);
+              }
+              
+              // If no main nodes, show empty state
+              return (
+                <div className="timeline-empty">
+                  <p>No timeline entries yet.</p>
+                  <small>Start a conversation to see your history here!</small>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
