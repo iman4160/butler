@@ -525,6 +525,190 @@ const stopAIResponse = () => {
   }, 500);
 };
 
+// Session Management
+  const loadSessions = async () => {
+  if (isSpeaking || isStreaming) {
+    stopAIResponse();
+  }
+  
+  try {
+    console.log('📋 Loading sessions list...');
+    const res = await fetch(`${API_URL}/sessions`);
+    
+    if (!res.ok) {
+      throw new Error(`Failed to load sessions: ${res.status}`);
+    }
+    
+    const sessionsList = await res.json();
+    console.log(`📋 Loaded ${sessionsList.length} sessions`);
+    setSessions(sessionsList);
+    
+    // If no current session and we have sessions, load the most recent one
+    if (!currentSessionId && sessionsList.length > 0) {
+      const mostRecent = sessionsList.reduce((latest, session) => {
+        return new Date(session.updatedAt) > new Date(latest.updatedAt) ? session : latest;
+      }, sessionsList[0]);
+      
+      console.log('🔄 Loading most recent session:', mostRecent.id);
+      await loadSession(mostRecent.id);
+    }
+    
+  } catch (error) { 
+    console.error('Failed to load sessions:', error); 
+  }
+};
+
+const loadSession = async (sessionId: string) => {
+  // Don't reload the same session
+  if (currentSessionId === sessionId && !isViewingHistory) {
+    console.log('Already on this session');
+    return;
+  }
+  
+  try {
+    // CRITICAL: Save current session before switching
+    if (currentSessionId && currentSessionId !== sessionId) {
+      console.log('💾 Saving current session before switching...');
+      await saveCurrentSession();
+    }
+    
+    // Stop any ongoing processes
+    if (isSpeaking || isStreaming) {
+      stopAIResponse();
+    }
+    
+    console.log('📂 Loading session:', sessionId);
+    const res = await fetch(`${API_URL}/sessions/${sessionId}`);
+    
+    if (!res.ok) {
+      throw new Error(`Failed to load session: ${res.status}`);
+    }
+    
+    const session = await res.json();
+    
+    // Restore all state
+    setMessages(session.messages || []);
+    
+    if (session.timelineNodes) {
+      setTimelineNodes(session.timelineNodes);
+      if (session.timelineNodes.length > 0) {
+        lastNodeIdRef.current = session.timelineNodes[session.timelineNodes.length - 1].id;
+      }
+    } else {
+      lastNodeIdRef.current = null;
+    }
+    
+    if (session.document) { 
+      setLivingDocument({ ...session.document, title: session.document.title || 'Notes' }); 
+      setEditTitleValue(session.document.title || 'Notes'); 
+    } else {
+      setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
+      setEditTitleValue('Notes');
+    }
+    
+    if (session.activity) setActivities(session.activity);
+    else setActivities([]);
+    
+    if (session.branches) {
+      setBranches(session.branches.map((b: Branch) => ({ ...b, collapsed: false })));
+      const maxBranchNumber = session.branches.reduce((max, b) => { 
+        const num = parseInt(b.name.split(' ')[1]) || 0; 
+        return Math.max(max, num); 
+      }, 0);
+      setNextBranchNumber(maxBranchNumber + 1);
+    } else {
+      setBranches([]);
+      setNextBranchNumber(1);
+    }
+    
+    if (session.nextBranchNumber) setNextBranchNumber(session.nextBranchNumber);
+    
+    if (session.canvasFiles && session.canvasFiles.length > 0) { 
+      setCanvasFiles(session.canvasFiles); 
+      setShowCodeCanvas(true); 
+    } else { 
+      setCanvasFiles([]); 
+      setShowCodeCanvas(false); 
+    }
+    
+    if (session.decisions) setDecisions(session.decisions);
+    else setDecisions([]);
+    
+    setCurrentSessionId(sessionId);
+    sessionStorage.setItem('butler_session', sessionId);
+    
+    // Reset all history flags
+    setIsViewingHistory(false);
+    setActiveRestoredNodeId(null);
+    setSearchTerm('');
+    setTranscriptSegments([]);
+    
+    // Set current branch
+    if (session.branches && session.branches.length > 0) {
+      const latestBranch = session.branches.sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )[0];
+      setCurrentBranchId(latestBranch.id);
+      if (latestBranch.document) setLivingDocument(latestBranch.document);
+    } else { 
+      setCurrentBranchId('main'); 
+    }
+    
+    addActivityToBackend(`📂 Loaded chat: ${session.title}`, 'system');
+    
+    // Scroll to bottom
+    if (messagesContainerRef.current) {
+      setTimeout(() => {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }, 100);
+    }
+    
+  } catch (error) { 
+    console.error('Failed to load session:', error);
+    addActivityToBackend(`❌ Failed to load chat`, 'system');
+  }
+};
+
+  const saveCurrentSession = async () => {
+  if (!currentSessionId) {
+    console.log('No current session to save');
+    return;
+  }
+  
+  try {
+    console.log('💾 Saving session:', currentSessionId);
+    
+    // Get current state
+    const sessionData = {
+      messages,
+      document: livingDocument,
+      activity: activities,
+      canvasFiles,
+      timelineNodes,
+      branches,
+      nextBranchNumber,
+      decisions,
+      updatedAt: new Date().toISOString()
+    };
+    
+    const res = await fetch(`${API_URL}/sessions/${currentSessionId}`, { 
+      method: 'PUT', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify(sessionData) 
+    });
+    
+    if (!res.ok) {
+      throw new Error(`Failed to save: ${res.status}`);
+    }
+    
+    console.log('✅ Session saved successfully');
+    return true;
+  } catch (error) { 
+    console.error('Failed to save session:', error);
+    return false;
+  }
+};
+
   // Timeline Functions
   // ========== Timeline Functions ==========
 const addToTimeline = (userMessage: string, assistantMessage: string) => {
@@ -883,8 +1067,8 @@ const updateDocumentOnly = async (text: string) => {
   }, 2000); // Wait 2 seconds of silence before updating
 }
 
-if (voiceResponseEnabled) {
-  useEffect(() => {
+useEffect(() => {
+  if (!voiceResponseEnabled) return;
   // Stop and cleanup if no mode is active
   if (!secretaryMode && !interactiveMode) {
     if (recognitionRef.current) {
@@ -1097,7 +1281,7 @@ if (voiceResponseEnabled) {
     if (eventSource) eventSource.close();
     if (janitorTimeoutRef.current) clearTimeout(janitorTimeoutRef.current);
   };
-}, [secretaryMode, interactiveMode]);
+}, [secretaryMode, interactiveMode, voiceResponseEnabled]);
 
   const handleRealtimeUpdate = (data: any) => {
   console.log('📡 SSE Event received:', data.type, data);
@@ -1202,100 +1386,83 @@ if (voiceResponseEnabled) {
   }
 };
 
-// Session Management
-  const loadSessions = async () => {
-  if (isSpeaking || isStreaming) {
-    stopAIResponse();
-  }
-  
+
+  const createNewSession = async () => {
+  // Don't proceed if already creating
   if (isCreatingSession) {
     console.log('Already creating a session, skipping...');
     return;
   }
   
+  setIsCreatingSession(true);
+  
   try {
-    // Try to load existing session from sessionStorage
-    const savedSessionId = sessionStorage.getItem('butler_session');
-    
-    if (savedSessionId) {
-      // Check if it still exists on backend
-      const res = await fetch(`${API_URL}/sessions/${savedSessionId}`);
-      if (res.ok) {
-        setCurrentSessionId(savedSessionId);
-        await loadSession(savedSessionId);
-        return;
-      }
+    // CRITICAL: Save current session BEFORE creating new one
+    if (currentSessionId) {
+      console.log('💾 Saving current session before creating new...');
+      await saveCurrentSession();
     }
     
-    // If no valid session, create new one
-    await createNewSession();
-  } catch (error) { 
-    console.error('Failed to load sessions:', error); 
-  }
-};
-
-const loadSession = async (sessionId: string) => {
-  try {
-    const res = await fetch(`${API_URL}/sessions/${sessionId}`);
-    const session = await res.json();
+    // Stop any ongoing processes
+    if (isSpeaking || isStreaming) {
+      stopAIResponse();
+    }
     
-    // Always set these, even if empty
-    setMessages(session.messages || []);
-    setLivingDocument(session.document || { content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
-    setEditTitleValue(session.document?.title || 'Notes');
-    setTimelineNodes(session.timelineNodes || []);
-    setBranches(session.branches || []);
-    setDecisions(session.decisions || []);
-    setCanvasFiles(session.canvasFiles || []);
-    // ... rest of your code
-  } catch (error) { 
-    console.error('Failed to load session:', error); 
-  }
-};
-
-  const saveCurrentSession = async () => {
-    if (!currentSessionId) return;
-    try {
-      await fetch(`${API_URL}/sessions/${currentSessionId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, document: livingDocument, activity: activities, canvasFiles, timelineNodes, branches, nextBranchNumber, decisions }) });
-    } catch (error) { console.error('Failed to save session:', error); }
-  };
-
-  const createNewSession = async () => {
-  try {
-    if (currentSessionId) await saveCurrentSession();
+    // Reset history flags
+    setIsViewingHistory(false);
+    setActiveRestoredNodeId(null);
     
+    console.log('🆕 Creating new session...');
     const res = await fetch(`${API_URL}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'New Chat' })
     });
-    const data = await res.json();
-    const newSessionId = data.sessionId;
     
-    // Clear ALL local state FIRST
+    if (!res.ok) {
+      throw new Error(`Failed to create session: ${res.status}`);
+    }
+    
+    const data = await res.json();
+    console.log('✅ New session created:', data.sessionId);
+    
+    // Save to session storage
+    sessionStorage.setItem('butler_session', data.sessionId);
+    setCurrentSessionId(data.sessionId);
+    
+    // Clear all local state for the new session
     setMessages([]);
     setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
     setEditTitleValue('Notes');
+    setCanvasFiles([]);
+    setShowCodeCanvas(false);
     setTimelineNodes([]);
     setBranches([]);
     setDecisions([]);
-    setCanvasFiles([]);
-    setShowCodeCanvas(false);
-    setIsViewingHistory(false);
-    setActiveRestoredNodeId(null);
+    setTranscriptSegments([]);
+    setActivities([]);
     setCurrentBranchId('main');
     lastNodeIdRef.current = null;
+    accumulatedConversationRef.current = '';
     
-    // Store new session ID
-    sessionStorage.setItem('butler_session', newSessionId);
-    setCurrentSessionId(newSessionId);
+    // Reload sessions list to show the new one
+    await loadSessions();
     
-    // Load the empty session
-    await loadSession(newSessionId);
+    // Ensure we're viewing the new session
+    await loadSession(data.sessionId);
     
-    console.log('✅ New session created and loaded:', newSessionId);
+    addActivityToBackend(`✨ New chat created`, 'system');
+    
+    // Scroll to top
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = 0;
+    }
+    
   } catch (error) { 
-    console.error('Failed to create session:', error); 
+    console.error('Failed to create session:', error);
+    addActivityToBackend(`❌ Failed to create new chat`, 'system');
+  } finally {
+    setIsCreatingSession(false);
   }
 };
 
@@ -1364,9 +1531,6 @@ const loadSession = async (sessionId: string) => {
 
   const restoreFromNode = (node: TimelineNode) => {
   console.log('🔄 ===== RESTORING FROM NODE =====');
-  console.log('Node user message:', node.userMessage);
-  console.log('Node has messagesSnapshot:', !!node.messagesSnapshot, node.messagesSnapshot?.length || 0);
-  console.log('Node has documentSnapshot:', !!node.documentSnapshot);
   
   if (!node.messagesSnapshot || node.messagesSnapshot.length === 0) {
     console.error('❌ No messages snapshot in this node!');
@@ -1375,27 +1539,21 @@ const loadSession = async (sessionId: string) => {
   
   // Restore messages
   setMessages([...node.messagesSnapshot]);
-  console.log('✅ Restored', node.messagesSnapshot.length, 'messages');
   
   // Restore document
   if (node.documentSnapshot) {
     setLivingDocument({ ...node.documentSnapshot });
     setEditTitleValue(node.documentSnapshot.title || 'Notes');
-    console.log('✅ Restored document:', node.documentSnapshot.title);
-    console.log('   Document content length:', node.documentSnapshot.content?.length || 0);
   } else if (node.documentContent) {
     setLivingDocument({
       content: node.documentContent,
       lastUpdated: new Date().toISOString(),
       title: livingDocument.title || 'Notes'
     });
-    console.log('✅ Restored document from content');
-  } else {
-    console.warn('⚠️ No document to restore');
   }
   
   setCurrentBranchId(node.branchId);
-  setIsViewingHistory(true);
+  setIsViewingHistory(true);  // Keep this - blocks chat while viewing history
   setActiveRestoredNodeId(node.id);
   lastNodeIdRef.current = node.id;
   
@@ -1404,37 +1562,36 @@ const loadSession = async (sessionId: string) => {
   setShowRestoreNotification(true);
   setTimeout(() => setShowRestoreNotification(false), 3000);
   
-  // Scroll to top
+  // Scroll to top when viewing history
   if (messagesContainerRef.current) {
     messagesContainerRef.current.scrollTop = 0;
   }
 };
 
 const branchFromNode = async (node: TimelineNode) => {
-  setIsViewingHistory(false);  // ← ADD THIS LINE
-  setActiveRestoredNodeId(null);  // ← ADD THIS LINE
   console.log('🌿 Creating branch from node:', node.id);
-  console.log('Node message:', node.userMessage);
+  
+  // CRITICAL: Reset viewing history flag FIRST
+  setIsViewingHistory(false);
+  setActiveRestoredNodeId(null);
   
   const branchNumber = nextBranchNumber;
   const styleIndex = ((branchNumber - 1) % (BRANCH_STYLES.length - 1)) + 1;
   const style = BRANCH_STYLES[styleIndex];
-  let aiBranchName = `${style.name} ${branchNumber}`;
   
-  // Generate a name from the node's message directly (instant, no API call)
+  // Generate instant name from node message
   const instantName = node.userMessage
-    .replace(/[^\w\s]/g, '')  // Remove punctuation
+    .replace(/[^\w\s]/g, '')
     .split(' ')
-    .slice(0, 4)               // Take first 4 words
+    .slice(0, 4)
     .join(' ')
-    .slice(0, 35);             // Cap at 35 chars
+    .slice(0, 35);
 
+  let aiBranchName = `${style.name} ${branchNumber}`;
   if (instantName && instantName.length > 2) {
     aiBranchName = instantName;
-    console.log('⚡ Instant branch name:', aiBranchName);
   }
   
-  // Create new branch
   const newBranchId = `branch_${Date.now()}`;
   const newBranch: Branch = {
     id: newBranchId,
@@ -1455,9 +1612,8 @@ const branchFromNode = async (node: TimelineNode) => {
   setBranches(prev => [...prev, newBranch]);
   setNextBranchNumber(prev => prev + 1);
   setCurrentBranchId(newBranchId);
-  setActiveRestoredNodeId(node.id);
   
-  // Create a branch node that links to the parent
+  // Create branch node
   const branchNode: TimelineNode = {
     id: `branch_node_${Date.now()}`,
     userMessage: node.userMessage,
@@ -1472,22 +1628,19 @@ const branchFromNode = async (node: TimelineNode) => {
   
   setTimelineNodes(prev => [branchNode, ...prev]);
   
-  // CRITICAL: Restore the EXACT state from the node
+  // Restore the exact state from the node
   if (node.messagesSnapshot && node.messagesSnapshot.length > 0) {
     setMessages([...node.messagesSnapshot]);
-    console.log('📝 Restored', node.messagesSnapshot.length, 'messages for branch');
   }
   
   if (node.documentSnapshot) {
     setLivingDocument({ ...node.documentSnapshot });
     setEditTitleValue(node.documentSnapshot.title || 'Notes');
-    console.log('📄 Restored document for branch:', node.documentSnapshot.title);
   }
   
-  setIsViewingHistory(true);
   lastNodeIdRef.current = node.id;
   
-  addActivityToBackend(`🌿 Created new branch: "${newBranch.name}" from "${node.userMessage.slice(0, 30)}..."`, 'system');
+  addActivityToBackend(`🌿 Created new branch: "${newBranch.name}"`, 'system');
   
   // Save to session
   if (currentSessionId) {
@@ -1501,9 +1654,9 @@ const branchFromNode = async (node: TimelineNode) => {
   
   setShowTimeline(false);
   
-  // Scroll to top
+  // Scroll to bottom of chat (not top)
   if (messagesContainerRef.current) {
-    messagesContainerRef.current.scrollTop = 0;
+    messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
   }
   
   setShowRestoreNotification(true);
@@ -1519,11 +1672,26 @@ const branchFromNode = async (node: TimelineNode) => {
   const returnToCurrent = async () => {
   if (!currentSessionId) return;
 
-   setIsViewingHistory(false);  // ← ADD THIS LINE
-   setActiveRestoredNodeId(null);  // ← ADD THIS LINE
+  // CRITICAL: Reset ALL history-related flags
+  setIsViewingHistory(false);
+  setActiveRestoredNodeId(null);
   
-  // Just reload the session from scratch
+  // Also reset any other blocking states
+  if (secretaryMode) {
+    // Don't clear secretary mode if active
+  }
+  
+  // Reload the session from scratch to get latest state
   await loadSession(currentSessionId);
+  
+  // Scroll to bottom to see latest messages
+  if (messagesContainerRef.current) {
+    setTimeout(() => {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }, 100);
+  }
+  
+  addActivityToBackend(`↺ Returned to current conversation`, 'system');
 };
 
   const handleCanvasFileChange = (fileName: string, newContent: string) => { setCanvasFiles(prev => prev.map(f => f.name === fileName ? { ...f, content: newContent } : f)); };
@@ -1825,9 +1993,13 @@ const branchFromNode = async (node: TimelineNode) => {
                 }
                 setInput(e.target.value);
               }}
-              placeholder={isViewingHistory ? "🔒 Viewing past conversation - click 'Return to Current' to chat" : (secretaryMode ? "Secretary mode active - speak naturally" : "Type your message...")}
+              placeholder={
+                isViewingHistory 
+                  ? "🔒 Viewing past conversation - click 'Return to Current' above to chat" 
+                  : (secretaryMode ? "Secretary mode active - speak naturally" : "Type your message...")
+              }
               onKeyPress={handleKeyPress}
-              disabled={secretaryMode || isViewingHistory}
+              disabled={secretaryMode || isViewingHistory || (isViewingHistory && !activeRestoredNodeId)}
             />
             <div className="voice-controls">
               <button
