@@ -799,8 +799,13 @@ const startPushToTalk = () => {
   
   console.log('🎤 Push-to-talk: STARTED - microphone active');
   
-  // 🔴 Clear any previous accumulated transcript
-  (window as any).accumulatedTranscript = '';
+  // Clear accumulated transcript in the recognition instance
+  if (recognitionRef.current && recognitionRef.current.clearAccumulatedTranscript) {
+    recognitionRef.current.clearAccumulatedTranscript();
+  }
+  
+  // Clear input field
+  setInput('');
   
   // Set BOTH state and ref
   setIsPushToTalkActive(true);
@@ -808,7 +813,74 @@ const startPushToTalk = () => {
   
   setVoiceActivity('listening');
   
-  // Rest of your code...
+  // Make sure recognition is running
+  if (!recognitionRef.current) {
+    console.log('🎤 Recognition not running, re-initializing...');
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+    
+    recognitionRef.current.onstart = () => {
+      console.log('🎤 Recognition started');
+      setVoiceActivity('listening');
+      setIsListening(true);
+    };
+    
+    recognitionRef.current.onend = () => {
+      console.log('Recognition ended');
+      setVoiceActivity('idle');
+      setIsListening(false);
+    };
+    
+    recognitionRef.current.onerror = (event: any) => {
+      console.error('Recognition error:', event.error);
+    };
+    
+    // Add accumulation to this temporary instance too
+    let tempAccumulated = '';
+    recognitionRef.current.onresult = async (event: any) => {
+      if (interactiveMode && !isPushToTalkActiveRef.current) return;
+      if (isViewingHistory) return;
+      
+      let finalTranscript = '', interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if (result.isFinal) finalTranscript += transcript;
+        else interimTranscript += transcript;
+      }
+      
+      if (finalTranscript && finalTranscript.length > 2) {
+        tempAccumulated += ' ' + finalTranscript;
+        tempAccumulated = tempAccumulated.trim();
+        setInput(tempAccumulated);
+      }
+      
+      if (interimTranscript) {
+        setInput(interimTranscript);
+      }
+    };
+    recognitionRef.current.getAccumulatedTranscript = () => tempAccumulated;
+    recognitionRef.current.clearAccumulatedTranscript = () => { tempAccumulated = ''; };
+  }
+  
+  try {
+    recognitionRef.current.start();
+    console.log('🎤 Recognition started for push-to-talk');
+  } catch (e: any) {
+    if (e.name === 'InvalidStateError') {
+      console.log('Recognition already running');
+    } else {
+      console.error('Error starting recognition:', e);
+    }
+  }
+  
+  if (pushToTalkTimeoutRef.current) {
+    clearTimeout(pushToTalkTimeoutRef.current);
+    pushToTalkTimeoutRef.current = null;
+  }
 };
 
 const stopPushToTalk = async () => {
@@ -823,9 +895,14 @@ const stopPushToTalk = async () => {
   // Wait a moment for the final transcript to come through
   await new Promise(resolve => setTimeout(resolve, 300));
   
-  // Get the accumulated transcript
-  const accumulated = (window as any).accumulatedTranscript || '';
-  const currentInputValue = input || accumulated;
+  // Get the accumulated transcript from the recognition instance
+  let accumulated = '';
+  if (recognitionRef.current && recognitionRef.current.getAccumulatedTranscript) {
+    accumulated = recognitionRef.current.getAccumulatedTranscript();
+  }
+  
+  // Also check input field as fallback
+  const currentInputValue = accumulated || input;
   
   console.log('🎤 Final accumulated transcript:', currentInputValue);
   
@@ -839,15 +916,16 @@ const stopPushToTalk = async () => {
     
     const messageToSend = currentInputValue;
     setInput(''); // Clear input immediately
-    (window as any).accumulatedTranscript = ''; // 🔴 Clear accumulated transcript
+    
+    // Clear the accumulated transcript
+    if (recognitionRef.current && recognitionRef.current.clearAccumulatedTranscript) {
+      recognitionRef.current.clearAccumulatedTranscript();
+    }
     
     await sendStreamingMessage(messageToSend);
   } else {
     console.log('🎤 No transcript to send');
   }
-  
-  // Clear the accumulated transcript
-  (window as any).accumulatedTranscript = '';
   
   // Stop recognition but keep instance for next time
   if (recognitionRef.current) {
@@ -1331,112 +1409,54 @@ useEffect(() => {
     }
   };
   
+  // Store accumulated transcript
+  let accumulatedFinalTranscript = '';
+  
   instance.onresult = async (event: any) => {
-  console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
-  
-  // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
-  if (interactiveMode && !isPushToTalkActiveRef.current) {
-    console.log('🎤 IGNORING - Push-to-talk not active');
-    return;
-  }
-  
-  // Ignore if viewing history
-  if (isViewingHistory) {
-    console.log('🎤 IGNORING - viewing history mode');
-    return;
-  }
-  
-  let finalTranscript = '', interimTranscript = '';
-  for (let i = event.resultIndex; i < event.results.length; i++) {
-    const result = event.results[i];
-    const transcript = result[0].transcript;
-    if (result.isFinal) finalTranscript += transcript;
-    else interimTranscript += transcript;
-  }
-  
-  // Ignore very short transcripts
-  if (finalTranscript && finalTranscript.length < 2) {
-    console.log('🎤 IGNORING - transcript too short');
-    return;
-  }
-  
-  if (finalTranscript) {
-    console.log('🎤 PROCESSING final transcript:', finalTranscript);
+    console.log('🎤 onresult triggered - isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
     
-    // 🔴 CRITICAL: Store the accumulated transcript
-    if (interactiveMode) {
-      // Append to existing transcript instead of replacing
-      const currentAccumulated = (window as any).accumulatedTranscript || '';
-      const newAccumulated = currentAccumulated + ' ' + finalTranscript;
-      (window as any).accumulatedTranscript = newAccumulated.trim();
+    // For Interactive Mode: ONLY process if push-to-talk is active
+    if (interactiveMode && !isPushToTalkActiveRef.current) {
+      console.log('🎤 IGNORING - Push-to-talk not active');
+      return;
+    }
+    
+    // Ignore if viewing history
+    if (isViewingHistory) {
+      console.log('🎤 IGNORING - viewing history mode');
+      return;
+    }
+    
+    let finalTranscript = '', interimTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const transcript = result[0].transcript;
+      if (result.isFinal) finalTranscript += transcript;
+      else interimTranscript += transcript;
+    }
+    
+    // Accumulate final transcripts
+    if (finalTranscript && finalTranscript.length > 2) {
+      accumulatedFinalTranscript += ' ' + finalTranscript;
+      accumulatedFinalTranscript = accumulatedFinalTranscript.trim();
+      console.log('🎤 Accumulated:', accumulatedFinalTranscript);
       
       // Show in input field for visual feedback
-      setInput(newAccumulated.trim());
-      console.log('🎤 Accumulated transcript:', (window as any).accumulatedTranscript);
-      return; // Don't send yet - wait for button release
+      setInput(accumulatedFinalTranscript);
     }
     
-    // Secretary mode handling...
-    if (secretaryMode) {
-      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
-      
-      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-        console.log('🔊 Wake word detected!');
-        setIsProcessingWakeWord(true);
-        setWakeWordTriggered(true);
-        setTranscriptSegments(prev => [...prev, finalTranscript]);
-        await updateDocumentOnly(cleanedText);
-        await sendStreamingMessage(cleanedText);
-        setTimeout(() => {
-          setIsProcessingWakeWord(false);
-          setWakeWordTriggered(false);
-        }, 2000);
-        setInput('');
-      } else if (!hasWakeWord && !isSpeaking) {
-        console.log('📝 Documenting only');
-        setTranscriptSegments(prev => [...prev, finalTranscript]);
-        
-        const userMessage: Message = {
-          id: Date.now(),
-          role: 'user',
-          content: finalTranscript,
-          timestamp: new Date().toLocaleTimeString()
-        };
-        setMessages(prev => [...prev, userMessage]);
-        await updateDocumentOnly(finalTranscript);
-        
-        setTimeout(() => {
-          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-          
-          const newNode: TimelineNode = {
-            id: Date.now().toString(),
-            userMessage: finalTranscript,
-            assistantMessage: '',
-            timestamp: new Date().toISOString(),
-            documentContent: documentSnapshot.content || '',
-            documentSnapshot: documentSnapshot,
-            messagesSnapshot: messagesSnapshot,
-            parentId: lastNodeIdRef.current,
-            branchId: currentBranchId
-          };
-          
-          setTimelineNodes(prev => [...prev, newNode]);
-          lastNodeIdRef.current = newNode.id;
-        }, 50);
-        
-        setInput('');
-      }
+    // Show interim transcript
+    if (interimTranscript) {
+      setInput(interimTranscript);
     }
-  }
-  
-  if (interimTranscript) {
-    setInput(interimTranscript);
-  }
-};
-  
-      return instance;
   };
+  
+  // Store the accumulated transcript on the instance so stopPushToTalk can access it
+  instance.getAccumulatedTranscript = () => accumulatedFinalTranscript;
+  instance.clearAccumulatedTranscript = () => { accumulatedFinalTranscript = ''; };
+  
+  return instance;
+};
   
   // Start recognition if not already running
   if (!recognitionRef.current && (secretaryMode || interactiveMode)) {
