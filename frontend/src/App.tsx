@@ -1730,12 +1730,23 @@ const branchFromNode = async (node: TimelineNode) => {
 
   console.log('🔓 Returning to current conversation...');
   
-  // Reset history flags
+  // FIRST: Save the current session to ensure latest state is stored
+  await saveCurrentSession();
+  
+  // SECOND: Reset history flags
   setIsViewingHistory(false);
   setActiveRestoredNodeId(null);
   
-  // Reload the session to get the latest state
-  await loadSession(currentSessionId);
+  // THIRD: Force reload the session from server
+  const res = await fetch(`${API_URL}/sessions/${currentSessionId}`);
+  const session = await res.json();
+  
+  // FOURTH: Restore the latest messages (not from the node)
+  setMessages(session.messages || []);
+  
+  if (session.document) {
+    setLivingDocument(session.document);
+  }
   
   // Scroll to bottom
   if (messagesContainerRef.current) {
