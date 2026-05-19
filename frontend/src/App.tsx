@@ -875,16 +875,49 @@ const startPushToTalk = () => {
   }
 };
 
-const stopPushToTalk = () => {
-  console.log('🎤 Push-to-talk: STOPPED - microphone inactive');
+const stopPushToTalk = async () => {
+  console.log('🎤 Push-to-talk: STOPPED - processing speech');
   
-  // Set BOTH state and ref
+  // Set BOTH state and ref to false immediately
   setIsPushToTalkActive(false);
   isPushToTalkActiveRef.current = false;
   
   setVoiceActivity('idle');
   
-  // Don't stop recognition, just ignore results via the flag
+  // Wait a moment for the final transcript to come through
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
+  // Get the transcribed text from the input field
+  const currentInputValue = input;
+  
+  console.log('🎤 Final transcript from input:', currentInputValue);
+  
+  // Send the message if there's content
+  if (currentInputValue && currentInputValue.trim().length > 0) {
+    console.log('📤 Auto-sending message:', currentInputValue);
+    
+    // Send the message
+    if (isSpeaking || isStreaming) {
+      stopAIResponse();
+    }
+    
+    const messageToSend = currentInputValue;
+    setInput(''); // Clear input immediately
+    
+    await sendStreamingMessage(messageToSend);
+  } else {
+    console.log('🎤 No transcript to send');
+  }
+  
+  // Stop recognition but keep instance for next time
+  if (recognitionRef.current) {
+    try {
+      recognitionRef.current.stop();
+    } catch (e) {
+      console.error('Error stopping recognition:', e);
+    }
+  }
+  
   pushToTalkTimeoutRef.current = setTimeout(() => {
     pushToTalkTimeoutRef.current = null;
   }, 100);
@@ -1359,107 +1392,13 @@ useEffect(() => {
   };
   
   instance.onresult = async (event: any) => {
-    console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActive:', isPushToTalkActive);
-    
-    // For Interactive Mode: ONLY process if push-to-talk is active
-    if (interactiveMode && !isPushToTalkActiveRef.current) {
-      console.log('🎤 IGNORING - Push-to-talk not active');
-      return;
-    }
-    
-    // Ignore if viewing history
-    if (isViewingHistory) {
-      console.log('🎤 IGNORING - viewing history mode');
-      return;
-    }
-    
-    let finalTranscript = '', interimTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const transcript = result[0].transcript;
-      if (result.isFinal) finalTranscript += transcript;
-      else interimTranscript += transcript;
-    }
-    
-    console.log('🎤 Transcript - final:', finalTranscript, 'interim:', interimTranscript);
-    
-    // Ignore very short transcripts
-    if (finalTranscript && finalTranscript.length < 2) {
-      console.log('🎤 IGNORING - transcript too short');
-      return;
-    }
-    
-    if (finalTranscript) {
-      console.log('🎤 PROCESSING:', finalTranscript);
-      
-      if (interactiveMode) {
-        console.log('💬 Interactive Mode - sending message');
-        setTranscriptSegments(prev => [...prev, finalTranscript]);
-        await updateDocumentOnly(finalTranscript);
-        await sendStreamingMessage(finalTranscript);
-        setInput('');
-        return;
-      }
-      
-      if (secretaryMode) {
-        // SECRETARY MODE - Check for wake word
-        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
-        
-        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-          console.log('🔊 Wake word detected!');
-          setIsProcessingWakeWord(true);
-          setWakeWordTriggered(true);
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
-          await updateDocumentOnly(cleanedText);
-          await sendStreamingMessage(cleanedText);
-          setTimeout(() => {
-            setIsProcessingWakeWord(false);
-            setWakeWordTriggered(false);
-          }, 2000);
-          setInput('');
-        } else if (!hasWakeWord && !isSpeaking) {
-          console.log('📝 Documenting only');
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
-          
-          const userMessage: Message = {
-            id: Date.now(),
-            role: 'user',
-            content: finalTranscript,
-            timestamp: new Date().toLocaleTimeString()
-          };
-          setMessages(prev => [...prev, userMessage]);
-          await updateDocumentOnly(finalTranscript);
-          
-          setTimeout(() => {
-            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-            
-            const newNode: TimelineNode = {
-              id: Date.now().toString(),
-              userMessage: finalTranscript,
-              assistantMessage: '',
-              timestamp: new Date().toISOString(),
-              documentContent: documentSnapshot.content || '',
-              documentSnapshot: documentSnapshot,
-              messagesSnapshot: messagesSnapshot,
-              parentId: lastNodeIdRef.current,
-              branchId: currentBranchId
-            };
-            
-            setTimelineNodes(prev => [...prev, newNode]);
-            lastNodeIdRef.current = newNode.id;
-          }, 50);
-          
-          setInput('');
-        }
-      }
-    }
-    
-    if (interimTranscript) {
-      console.log('🎤 Interim transcript:', interimTranscript);
-      setInput(interimTranscript);
-    }
-  };
+  console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
+  
+  // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
+  if (interactiveMode && !isPushToTalkActiveRef.current) {
+    console.log('🎤 IGNORING - Push-to-talk not active');
+    return;
+  }
   
   return instance;
 };
