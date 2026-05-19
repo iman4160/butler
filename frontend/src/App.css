@@ -3382,3 +3382,29 @@ body {
     transform: translateY(0);
   }
 }
+
+/* Table styling for document */
+.doc-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.75rem;
+}
+
+.doc-content th,
+.doc-content td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-content th {
+  background: rgba(245, 196, 81, 0.1);
+  color: #F5C451;
+  font-weight: 500;
+}
+
+.doc-content td {
+  color: #E5E7EB;
+}
