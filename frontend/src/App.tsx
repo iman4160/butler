@@ -1987,7 +1987,16 @@ const branchFromNode = async (node: TimelineNode) => {
   const matchesSearch = (text: string) => { if (!searchTerm) return true; return text.toLowerCase().includes(searchTerm.toLowerCase()); };
   const nodesByBranch = getNodesByBranch();
 
-  const renderBranchGroup = (branchId: string, branchNodes: TimelineNode[], level: number = 0) => {
+  const renderBranchGroup = (branchId: string, branchNodes: TimelineNode[], level: number = 0, visitedBranches: Set<string> = new Set()) => {
+  // 🔴 PREVENT INFINITE RECURSION
+  if (visitedBranches.has(branchId)) {
+    console.warn('Circular branch reference detected, skipping:', branchId);
+    return null;
+  }
+  
+  const newVisited = new Set(visitedBranches);
+  newVisited.add(branchId);
+  
   const branch = branches.find(b => b.id === branchId);
   const isMain = branchId === 'main';
   const branchStyle = isMain ? BRANCH_STYLES[0] : {
@@ -2001,152 +2010,147 @@ const branchFromNode = async (node: TimelineNode) => {
   const isExpanded = expandedBranches.has(branchId);
   const messageCount = branchNodes.length;
   
-  // Find where branches start from this branch
-  const branchPoints = timelineNodes.filter(node => 
-    node.parentId && node.branchId !== node.parentId
-  );
-  
   return (
     <div key={branchId} className="timeline-branch-group" style={{ marginLeft: level * 16 }}>
       {/* Branch Header - Collapsible */}
       <div 
-  className="timeline-branch-header-collapsible"
-  onClick={() => toggleBranchExpansion(branchId)}
-  style={{
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '8px 12px',
-    marginTop: level > 0 ? '8px' : '0',
-    marginBottom: '8px',
-    backgroundColor: `${branchStyle.color}10`,
-    borderRadius: '6px',
-    cursor: 'pointer',
-    borderLeft: `3px solid ${branchStyle.color}`,
-    userSelect: 'none'
-  }}
->
-  <span style={{ fontSize: '12px', color: branchStyle.color }}>
-    {isExpanded ? '▼' : '▶'}
-  </span>
-  <span className="branch-icon" style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
-  
-  {/* Branch Name - Clickable to rename */}
-  {renamingBranchId === branchId ? (
-    <input
-      type="text"
-      value={branchRenameValue}
-      onChange={(e) => setBranchRenameValue(e.target.value)}
-      onBlur={() => {
-        renameBranch(branchId, branchRenameValue);
-        setRenamingBranchId(null);
-        setBranchRenameValue('');
-      }}
-      onKeyPress={(e) => {
-        if (e.key === 'Enter') {
-          renameBranch(branchId, branchRenameValue);
-          setRenamingBranchId(null);
-          setBranchRenameValue('');
-        }
-      }}
-      autoFocus
-      style={{
-        background: '#1a1a1a',
-        color: branchStyle.color,
-        border: `1px solid ${branchStyle.color}`,
-        borderRadius: '4px',
-        padding: '4px 8px',
-        fontSize: '12px',
-        fontWeight: 'bold',
-        flex: 1
-      }}
-      onClick={(e) => e.stopPropagation()}
-    />
-  ) : (
-    <span 
-      className="branch-name" 
-      style={{ 
-        color: branchStyle.color, 
-        fontWeight: 'bold', 
-        flex: 1,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '6px'
-      }}
-      onDoubleClick={(e) => {
-        e.stopPropagation();
-        setRenamingBranchId(branchId);
-        setBranchRenameValue(isMain ? 'Main Branch' : branchStyle.name);
-      }}
-      title="Double-click to rename"
-    >
-      {isMain ? 'Main Branch' : branchStyle.name}
-      <Edit3 size={10} style={{ opacity: 0.5 }} />
-    </span>
-  )}
-  
-  <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
-    {messageCount} {messageCount === 1 ? 'message' : 'messages'}
-  </span>
-  
-  {/* RENAME BUTTON - Pencil icon */}
-  {!isMain && renamingBranchId !== branchId && (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        setRenamingBranchId(branchId);
-        setBranchRenameValue(branchStyle.name);
-      }}
-      title="Rename branch"
-      style={{
-        background: 'none',
-        border: 'none',
-        color: branchStyle.color,
-        cursor: 'pointer',
-        padding: '4px',
-        borderRadius: '4px',
-        opacity: 0.6,
-        transition: 'opacity 0.2s',
-        display: 'flex',
-        alignItems: 'center'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
-    >
-      <Edit3 size={12} />
-    </button>
-  )}
-  
-  {/* DELETE BUTTON */}
-  {!isMain && (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        if (confirm(`Delete branch "${branchStyle.name}"? This cannot be undone.`)) {
-          deleteBranch(branchId);
-        }
-      }}
-      title="Delete branch"
-      style={{
-        background: 'none',
-        border: 'none',
-        color: '#ef4444',
-        cursor: 'pointer',
-        padding: '4px',
-        borderRadius: '4px',
-        opacity: 0.6,
-        transition: 'opacity 0.2s',
-        display: 'flex',
-        alignItems: 'center'
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
-    >
-      <Trash2 size={12} />
-    </button>
-  )}
-</div>
+        className="timeline-branch-header-collapsible"
+        onClick={() => toggleBranchExpansion(branchId)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '8px 12px',
+          marginTop: level > 0 ? '8px' : '0',
+          marginBottom: '8px',
+          backgroundColor: `${branchStyle.color}10`,
+          borderRadius: '6px',
+          cursor: 'pointer',
+          borderLeft: `3px solid ${branchStyle.color}`,
+          userSelect: 'none'
+        }}
+      >
+        <span style={{ fontSize: '12px', color: branchStyle.color }}>
+          {isExpanded ? '▼' : '▶'}
+        </span>
+        <span className="branch-icon" style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
+        
+        {/* Branch Name - Clickable to rename */}
+        {renamingBranchId === branchId ? (
+          <input
+            type="text"
+            value={branchRenameValue}
+            onChange={(e) => setBranchRenameValue(e.target.value)}
+            onBlur={() => {
+              renameBranch(branchId, branchRenameValue);
+              setRenamingBranchId(null);
+              setBranchRenameValue('');
+            }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                renameBranch(branchId, branchRenameValue);
+                setRenamingBranchId(null);
+                setBranchRenameValue('');
+              }
+            }}
+            autoFocus
+            style={{
+              background: '#1a1a1a',
+              color: branchStyle.color,
+              border: `1px solid ${branchStyle.color}`,
+              borderRadius: '4px',
+              padding: '4px 8px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              flex: 1
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span 
+            className="branch-name" 
+            style={{ 
+              color: branchStyle.color, 
+              fontWeight: 'bold', 
+              flex: 1,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setRenamingBranchId(branchId);
+              setBranchRenameValue(isMain ? 'Main Branch' : branchStyle.name);
+            }}
+            title="Double-click to rename"
+          >
+            {isMain ? 'Main Branch' : branchStyle.name}
+            <Edit3 size={10} style={{ opacity: 0.5 }} />
+          </span>
+        )}
+        
+        <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
+          {messageCount} {messageCount === 1 ? 'message' : 'messages'}
+        </span>
+        
+        {/* RENAME BUTTON - Pencil icon */}
+        {!isMain && renamingBranchId !== branchId && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenamingBranchId(branchId);
+              setBranchRenameValue(branchStyle.name);
+            }}
+            title="Rename branch"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: branchStyle.color,
+              cursor: 'pointer',
+              padding: '4px',
+              borderRadius: '4px',
+              opacity: 0.6,
+              transition: 'opacity 0.2s',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+          >
+            <Edit3 size={12} />
+          </button>
+        )}
+        
+        {/* DELETE BUTTON */}
+        {!isMain && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm(`Delete branch "${branchStyle.name}"? This cannot be undone.`)) {
+                deleteBranch(branchId);
+              }
+            }}
+            title="Delete branch"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#ef4444',
+              cursor: 'pointer',
+              padding: '4px',
+              borderRadius: '4px',
+              opacity: 0.6,
+              transition: 'opacity 0.2s',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
       
       {/* Branch Content - Only show if expanded */}
       {isExpanded && (
@@ -2179,12 +2183,9 @@ const branchFromNode = async (node: TimelineNode) => {
                 {/* The message node */}
                 {renderTreeNode(node, branchStyle, isLastNode)}
                 
-                {/* Child branches (nested) */}
+                {/* Child branches (nested) - PASS THE VISITED SET */}
                 {childBranches.map(childBranch => {
                   const childNodes = timelineNodes.filter(n => n.branchId === childBranch.id);
-                  const branchConnectionNode = timelineNodes.find(n => 
-                    n.parentId === node.id && n.branchId === childBranch.id
-                  );
                   
                   return (
                     <div key={childBranch.id} style={{ position: 'relative', marginTop: '8px' }}>
@@ -2199,7 +2200,7 @@ const branchFromNode = async (node: TimelineNode) => {
                         borderBottom: `2px dashed ${childBranch.color}`,
                         borderBottomLeftRadius: '8px'
                       }} />
-                      {renderBranchGroup(childBranch.id, childNodes, level + 1)}
+                      {renderBranchGroup(childBranch.id, childNodes, level + 1, newVisited)}
                     </div>
                   );
                 })}
@@ -2629,22 +2630,22 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
           </div>
           <div className="timeline-branch-list" ref={timelineListRef}>
             {(() => {
-              const branchGroups = buildMessageTree();
-              
-              // Render main branch first
-              const mainNodes = branchGroups.get('main') || [];
-              if (mainNodes.length > 0) {
-                return renderBranchGroup('main', mainNodes, 0);
-              }
-              
-              // If no main nodes, show empty state
-              return (
-                <div className="timeline-empty">
-                  <p>No timeline entries yet.</p>
-                  <small>Start a conversation to see your history here!</small>
-                </div>
-              );
-            })()}
+            const branchGroups = buildMessageTree();
+            
+            // Render main branch first - PASS EMPTY SET
+            const mainNodes = branchGroups.get('main') || [];
+            if (mainNodes.length > 0) {
+              return renderBranchGroup('main', mainNodes, 0, new Set());
+            }
+            
+            // If no main nodes, show empty state
+            return (
+              <div className="timeline-empty">
+                <p>No timeline entries yet.</p>
+                <small>Start a conversation to see your history here!</small>
+              </div>
+            );
+          })()}
           </div>
         </div>
       )}
