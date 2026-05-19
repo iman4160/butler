@@ -1,3 +1,4 @@
+
 /* ========== GLOBAL STYLES ========== */
 * {
   margin: 0;
@@ -3436,4 +3437,306 @@ body {
 
 .doc-content td {
   color: #E5E7EB;
+}
+
+/* ============================================ */
+/* RESPONSIVE DESIGN - Mobile & Tablet Support  */
+/* ============================================ */
+
+/* Tablet Styles (768px - 1024px) */
+@media (max-width: 1024px) {
+  .header .logo-text {
+    font-size: 16px;
+  }
+  
+  .chat-history-sidebar.expanded {
+    width: 240px;
+  }
+  
+  .timeline-panel,
+  .document-panel {
+    width: 280px;
+  }
+  
+  .chat-bubble-content {
+    font-size: 14px;
+  }
+  
+  .branch-name {
+    font-size: 12px;
+  }
+}
+
+/* Mobile Styles (under 768px) */
+@media (max-width: 768px) {
+  /* Header */
+  .header {
+    padding: 8px 12px;
+  }
+  
+  .header .logo-text {
+    display: none;
+  }
+  
+  .header .logo-symbol {
+    font-size: 20px;
+  }
+  
+  .header-right .header-btn span {
+    display: none;
+  }
+  
+  .header-right .header-btn {
+    padding: 6px;
+  }
+  
+  /* Chat Sidebar */
+  .chat-sidebar-container {
+    position: relative;
+  }
+  
+  .chat-history-sidebar.expanded {
+    position: fixed;
+    left: 0;
+    top: 50px;
+    width: 75%;
+    max-width: 280px;
+    height: calc(100vh - 50px);
+    z-index: 1000;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.3);
+  }
+  
+  .chat-edge-toggle {
+    z-index: 1001;
+  }
+  
+  /* Main Layout - Stack vertically */
+  .main-layout {
+    flex-direction: column;
+  }
+  
+  .chat-area {
+    order: 1;
+    height: 60vh;
+  }
+  
+  .timeline-panel {
+    order: 2;
+    width: 100%;
+    height: 40vh;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 900;
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+    border-top: 1px solid #333;
+  }
+  
+  .timeline-panel.visible {
+    transform: translateY(0);
+  }
+  
+  .document-panel {
+    order: 2;
+    width: 100%;
+    height: 50vh;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 900;
+  }
+  
+  /* Chat Messages */
+  .chat-messages-area {
+    height: calc(60vh - 120px);
+  }
+  
+  .chat-bubble {
+    max-width: 90%;
+  }
+  
+  .chat-bubble-content {
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+  
+  /* Chat Input */
+  .chat-input-area {
+    padding: 8px;
+  }
+  
+  .chat-input-wrapper input {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+  
+  .voice-controls {
+    gap: 4px;
+  }
+  
+  .mute-btn span,
+  .mode-toggle span {
+    display: none;
+  }
+  
+  .mute-btn,
+  .mode-toggle button {
+    padding: 8px 10px;
+  }
+  
+  /* Timeline Panel */
+  .timeline-header h3 {
+    font-size: 14px;
+  }
+  
+  .timeline-search input {
+    font-size: 12px;
+    padding: 4px 8px;
+    width: 120px;
+  }
+  
+  .timeline-node-card {
+    padding: 6px 10px;
+  }
+  
+  .timeline-node-message {
+    font-size: 11px;
+  }
+  
+  .branch-name {
+    font-size: 11px;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .timeline-branch-header-collapsible {
+    padding: 6px 10px;
+  }
+  
+  /* Document Panel */
+  .document-header h2 {
+    font-size: 16px;
+  }
+  
+  .doc-content {
+    font-size: 13px;
+    padding: 12px;
+  }
+  
+  /* Activity Bar */
+  .activity-bar {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  
+  .activity-text {
+    display: none;
+  }
+  
+  .activity-item {
+    font-size: 10px;
+  }
+  
+  /* Buttons */
+  .new-chat-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  
+  .send-btn {
+    padding: 8px 12px;
+  }
+  
+  /* Transcript Panel (Secretary Mode) */
+  .transcript-panel {
+    max-height: 200px;
+  }
+  
+  .transcript-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .transcript-actions {
+    flex-wrap: wrap;
+  }
+  
+  .segment-text {
+    font-size: 12px;
+  }
+}
+
+/* Small Mobile (under 480px) */
+@media (max-width: 480px) {
+  .chat-history-sidebar.expanded {
+    width: 85%;
+  }
+  
+  .chat-bubble {
+    max-width: 95%;
+  }
+  
+  .timeline-node-actions button {
+    padding: 2px;
+  }
+  
+  .branch-delete-btn,
+  .timeline-branch-header-collapsible button {
+    padding: 2px;
+  }
+  
+  .export-dropdown .export-btn span {
+    display: none;
+  }
+  
+  .export-btn {
+    padding: 6px 8px;
+  }
+}
+
+/* Landscape Mode on Mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+  .chat-area {
+    height: 50vh;
+  }
+  
+  .chat-messages-area {
+    height: calc(50vh - 100px);
+  }
+  
+  .timeline-panel {
+    height: 45vh;
+  }
+  
+  .transcript-panel {
+    max-height: 150px;
+  }
+}
+
+/* Touch-friendly for mobile (larger tap targets) */
+@media (max-width: 768px) {
+  button,
+  .timeline-node-action,
+  .branch-delete-btn,
+  .chat-history-item,
+  .pin-chat-btn,
+  .delete-chat-btn {
+    min-height: 44px;
+  }
+  
+  .timeline-node-action {
+    min-width: 44px;
+  }
+  
+  input,
+  textarea,
+  button {
+    font-size: 16px; /* Prevents zoom on focus in iOS */
+  }
 }

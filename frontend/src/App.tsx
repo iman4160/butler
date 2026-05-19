@@ -304,7 +304,7 @@ function App() {
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
   const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(['main']));
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
+  const [showTimelineMobile, setShowTimelineMobile] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [showBootSequence, setShowBootSequence] = useState(true);
 
@@ -2564,7 +2564,7 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
       </div>
 
       {showTimeline && (
-        <div className="timeline-panel">
+        <div className={`timeline-panel ${showTimelineMobile ? 'visible' : ''}`}>
           <div className="timeline-header">
             <h3>Conversation Timeline</h3>
             <div className="timeline-search">
