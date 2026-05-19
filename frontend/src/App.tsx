@@ -559,6 +559,9 @@ const stopAIResponse = () => {
 };
 
 const loadSession = async (sessionId: string) => {
+
+  setIsViewingHistory(false);
+  setActiveRestoredNodeId(null);
   // Don't reload the same session
   if (currentSessionId === sessionId && !isViewingHistory) {
     console.log('Already on this session');
@@ -1564,6 +1567,9 @@ useEffect(() => {
 
 const branchFromNode = async (node: TimelineNode) => {
   console.log('🌿 Creating branch from node:', node.id);
+
+  setIsViewingHistory(false);
+  setActiveRestoredNodeId(null);
   
   // CRITICAL: Reset viewing history flag FIRST
   setIsViewingHistory(false);
@@ -1993,7 +1999,7 @@ const branchFromNode = async (node: TimelineNode) => {
                   : (secretaryMode ? "Secretary mode active - speak naturally" : "Type your message...")
               }
               onKeyPress={handleKeyPress}
-              disabled={secretaryMode || isViewingHistory || (isViewingHistory && !activeRestoredNodeId)}
+              ddisabled={secretaryMode || isViewingHistory}
             />
             <div className="voice-controls">
               <button
