@@ -427,7 +427,7 @@ const detectWakeWord = (text: string): { hasWakeWord: boolean; cleanedText: stri
 }
 
 const speakResponse = (text: string) => {
-  // ADD THIS LINE FIRST:
+  // Don't speak if muted
   if (isMutedRef.current) {
     console.log('🔇 Muted - not speaking');
     return;
@@ -435,10 +435,28 @@ const speakResponse = (text: string) => {
   
   if (!voiceResponseEnabled) return;
   if (shouldStopRef.current) return;
-  if (shouldStopRef.current) {
-    console.log('🔇 Speech cancelled - interruption flag set');
-    return;
+  
+  // CRITICAL: Force stop recognition BEFORE speaking to prevent echo
+  if (recognitionRef.current) {
+    try {
+      console.log('🎤 FORCE stopping recognition before AI speaks');
+      recognitionRef.current.stop();
+      // Small delay to ensure stop completes
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.abort?.();
+          } catch (e) {}
+        }
+      }, 50);
+    } catch (e) {
+      console.log('Recognition stop error:', e);
+    }
   }
+  
+  // Set speaking flag immediately
+  setIsSpeaking(true);
+  setVoiceActivity('speaking');
   
   let cleanText = text
     .replace(/```[\s\S]*?```/g, '')
@@ -452,13 +470,6 @@ const speakResponse = (text: string) => {
     cleanText = cleanText.slice(0, 400) + '...';
   }
   
-  // Stop recognition while speaking to prevent echo
-  if (recognitionRef.current && secretaryMode) {
-    try {
-      recognitionRef.current.stop();
-    } catch (e) {}
-  }
-  
   const utterance = new SpeechSynthesisUtterance(cleanText);
   utterance.rate = 0.85;
   utterance.pitch = 1.0;
@@ -469,35 +480,41 @@ const speakResponse = (text: string) => {
   }
   
   utterance.onstart = () => {
+    console.log('🔊 AI started speaking - recognition stopped');
     setIsSpeaking(true);
     setVoiceActivity('speaking');
   };
   
   utterance.onend = () => {
+    console.log('🔊 AI finished speaking - restarting recognition');
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
-    // Restart recognition after speaking
-    if (recognitionRef.current && secretaryMode) {
-      setTimeout(() => {
+    // Wait longer before restarting to let audio settle (1 second)
+    setTimeout(() => {
+      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
         try {
+          console.log('🎤 Restarting recognition after AI speech');
           recognitionRef.current.start();
-        } catch (e) {}
-      }, 500);
-    }
+        } catch (e) {
+          console.error('Failed to restart recognition:', e);
+        }
+      }
+    }, 1000);
   };
   
   utterance.onerror = () => {
+    console.log('🔊 AI speech error');
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
-    if (recognitionRef.current && secretaryMode) {
-      setTimeout(() => {
+    setTimeout(() => {
+      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
         try {
           recognitionRef.current.start();
         } catch (e) {}
-      }, 500);
-    }
+      }
+    }, 1000);
   };
   
   window.speechSynthesis.speak(utterance);
@@ -1238,94 +1255,112 @@ useEffect(() => {
     };
     
     instance.onresult = async (event: any) => {
-      let finalTranscript = '', interimTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        const transcript = result[0].transcript;
-        if (result.isFinal) finalTranscript += transcript;
-        else interimTranscript += transcript;
-      }
-      setAudioLevel(Math.random() * 100);
+  // CRITICAL: Ignore ALL transcription if AI is currently speaking
+  if (isSpeaking) {
+    console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
+    return;
+  }
+  
+  // Also ignore if viewing history
+  if (isViewingHistory) {
+    console.log('🎤 IGNORING speech - viewing history mode');
+    return;
+  }
+  
+  let finalTranscript = '', interimTranscript = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const result = event.results[i];
+    const transcript = result[0].transcript;
+    if (result.isFinal) finalTranscript += transcript;
+    else interimTranscript += transcript;
+  }
+  setAudioLevel(Math.random() * 100);
+  
+  // Ignore very short transcripts (likely ambient noise or AI echo fragments)
+  if (finalTranscript && finalTranscript.length < 3) {
+    console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
+    return;
+  }
+  
+  if (finalTranscript) {
+    console.log('🎤 Transcribed:', finalTranscript);
+    
+    if (interactiveMode) {
+      console.log('💬 Interactive Mode - responding');
+      setTranscriptSegments(prev => [...prev, finalTranscript]);
       
-      if (finalTranscript) {
-        console.log('🎤 Transcribed:', finalTranscript);
-        
-        if (interactiveMode) {
-          console.log('💬 Interactive Mode - responding');
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
-          
-          // Update document with the spoken text
-          await updateDocumentOnly(finalTranscript);
-          await sendStreamingMessage(finalTranscript);
-          setInput('');
-          return;
-        }
-        
-        if (secretaryMode) {
-          // SECRETARY MODE - Check for wake word
-          const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
-          
-          if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-            console.log('🔊 Wake word detected!');
-            setIsProcessingWakeWord(true);
-            setWakeWordTriggered(true);
-            setTranscriptSegments(prev => [...prev, finalTranscript]);
-            
-            // Update document and get AI response
-            await updateDocumentOnly(cleanedText);
-            await sendStreamingMessage(cleanedText);
-            
-            setTimeout(() => {
-              setIsProcessingWakeWord(false);
-              setWakeWordTriggered(false);
-            }, 2000);
-            
-            setInput('');
-          } else if (!hasWakeWord && !isSpeaking) {
-            console.log('📝 Documenting only');
-            setTranscriptSegments(prev => [...prev, finalTranscript]);
-            
-            const userMessage: Message = {
-              id: Date.now(),
-              role: 'user',
-              content: finalTranscript,
-              timestamp: new Date().toLocaleTimeString()
-            };
-            setMessages(prev => [...prev, userMessage]);
-            
-            // Only update document, no AI response
-            await updateDocumentOnly(finalTranscript);
-            
-            // Add to timeline without AI response
-            setTimeout(() => {
-              const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-              const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-              
-              const newNode: TimelineNode = {
-                id: Date.now().toString(),
-                userMessage: finalTranscript,
-                assistantMessage: '',
-                timestamp: new Date().toISOString(),
-                documentContent: documentSnapshot.content || '',
-                documentSnapshot: documentSnapshot,
-                messagesSnapshot: messagesSnapshot,
-                parentId: lastNodeIdRef.current,
-                branchId: currentBranchId
-              };
-              
-              setTimelineNodes(prev => [...prev, newNode]);
-              lastNodeIdRef.current = newNode.id;
-            }, 50);
-            
-            setInput('');
-          }
-        }
-      }
+      // Update document with the spoken text
+      await updateDocumentOnly(finalTranscript);
+      await sendStreamingMessage(finalTranscript);
+      setInput('');
+      return;
+    }
+    
+    if (secretaryMode) {
+      // SECRETARY MODE - Check for wake word
+      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
       
-      if (interimTranscript) {
-        setInput(interimTranscript);
+      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+        console.log('🔊 Wake word detected!');
+        setIsProcessingWakeWord(true);
+        setWakeWordTriggered(true);
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        
+        // Update document and get AI response
+        await updateDocumentOnly(cleanedText);
+        await sendStreamingMessage(cleanedText);
+        
+        setTimeout(() => {
+          setIsProcessingWakeWord(false);
+          setWakeWordTriggered(false);
+        }, 2000);
+        
+        setInput('');
+      } else if (!hasWakeWord && !isSpeaking) {
+        console.log('📝 Documenting only');
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        
+        const userMessage: Message = {
+          id: Date.now(),
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setMessages(prev => [...prev, userMessage]);
+        
+        // Only update document, no AI response
+        await updateDocumentOnly(finalTranscript);
+        
+        // Add to timeline without AI response
+        setTimeout(() => {
+          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
+          
+          const newNode: TimelineNode = {
+            id: Date.now().toString(),
+            userMessage: finalTranscript,
+            assistantMessage: '',
+            timestamp: new Date().toISOString(),
+            documentContent: documentSnapshot.content || '',
+            documentSnapshot: documentSnapshot,
+            messagesSnapshot: messagesSnapshot,
+            parentId: lastNodeIdRef.current,
+            branchId: currentBranchId
+          };
+          
+          setTimelineNodes(prev => [...prev, newNode]);
+          lastNodeIdRef.current = newNode.id;
+        }, 50);
+        
+        setInput('');
       }
-    };
+    }
+  }
+  
+  if (interimTranscript) {
+    setInput(interimTranscript);
+  }
+};
     
     return instance;
   };
