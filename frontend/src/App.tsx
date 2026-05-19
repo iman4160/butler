@@ -274,7 +274,7 @@ function App() {
   const [intentIndicatorTimeout, setIntentIndicatorTimeout] = useState<NodeJS.Timeout | null>(null);
   
   // Voice response states
-  const [voiceResponseEnabled, setVoiceResponseEnabled] = useState(true);
+  const [voiceResponseEnabled, setVoiceResponseEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [currentStreamingResponse, setCurrentStreamingResponse] = useState('');
@@ -1413,43 +1413,117 @@ useEffect(() => {
   let accumulatedFinalTranscript = '';
   
   instance.onresult = async (event: any) => {
-    console.log('🎤 onresult triggered - isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
+  console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'secretaryMode:', secretaryMode);
+  
+  // Ignore if viewing history
+  if (isViewingHistory) {
+    console.log('🎤 IGNORING - viewing history mode');
+    return;
+  }
+  
+  let finalTranscript = '', interimTranscript = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const result = event.results[i];
+    const transcript = result[0].transcript;
+    if (result.isFinal) finalTranscript += transcript;
+    else interimTranscript += transcript;
+  }
+  
+  // Ignore very short transcripts (ambient noise)
+  if (finalTranscript && finalTranscript.length < 2) {
+    console.log('🎤 IGNORING - transcript too short');
+    return;
+  }
+  
+  if (finalTranscript) {
+    console.log('🎤 PROCESSING:', finalTranscript);
     
-    // For Interactive Mode: ONLY process if push-to-talk is active
-    if (interactiveMode && !isPushToTalkActiveRef.current) {
-      console.log('🎤 IGNORING - Push-to-talk not active');
-      return;
-    }
-    
-    // Ignore if viewing history
-    if (isViewingHistory) {
-      console.log('🎤 IGNORING - viewing history mode');
-      return;
-    }
-    
-    let finalTranscript = '', interimTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const transcript = result[0].transcript;
-      if (result.isFinal) finalTranscript += transcript;
-      else interimTranscript += transcript;
-    }
-    
-    // Accumulate final transcripts
-    if (finalTranscript && finalTranscript.length > 2) {
-      accumulatedFinalTranscript += ' ' + finalTranscript;
-      accumulatedFinalTranscript = accumulatedFinalTranscript.trim();
-      console.log('🎤 Accumulated:', accumulatedFinalTranscript);
+    if (interactiveMode) {
+      // INTERACTIVE MODE: Send message immediately
+      console.log('💬 Interactive Mode - sending message');
+      setTranscriptSegments(prev => [...prev, finalTranscript]);
       
-      // Show in input field for visual feedback
-      setInput(accumulatedFinalTranscript);
+      // Show in input for visual feedback
+      setInput(finalTranscript);
+      
+      // Send the message
+      if (isSpeaking || isStreaming) {
+        stopAIResponse();
+      }
+      
+      const messageToSend = finalTranscript;
+      setInput(''); // Clear input
+      
+      await updateDocumentOnly(messageToSend);
+      await sendStreamingMessage(messageToSend);
+      return;
     }
     
-    // Show interim transcript
-    if (interimTranscript) {
-      setInput(interimTranscript);
+    if (secretaryMode) {
+      // SECRETARY MODE - Check for wake word
+      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+      
+      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+        console.log('🔊 Wake word detected!');
+        setIsProcessingWakeWord(true);
+        setWakeWordTriggered(true);
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        
+        // Update document and get AI response
+        await updateDocumentOnly(cleanedText);
+        await sendStreamingMessage(cleanedText);
+        
+        setTimeout(() => {
+          setIsProcessingWakeWord(false);
+          setWakeWordTriggered(false);
+        }, 2000);
+        
+        setInput('');
+      } else if (!hasWakeWord && !isSpeaking) {
+        console.log('📝 Documenting only');
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        
+        const userMessage: Message = {
+          id: Date.now(),
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setMessages(prev => [...prev, userMessage]);
+        
+        // Only update document, no AI response
+        await updateDocumentOnly(finalTranscript);
+        
+        // Add to timeline without AI response
+        setTimeout(() => {
+          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
+          
+          const newNode: TimelineNode = {
+            id: Date.now().toString(),
+            userMessage: finalTranscript,
+            assistantMessage: '',
+            timestamp: new Date().toISOString(),
+            documentContent: documentSnapshot.content || '',
+            documentSnapshot: documentSnapshot,
+            messagesSnapshot: messagesSnapshot,
+            parentId: lastNodeIdRef.current,
+            branchId: currentBranchId
+          };
+          
+          setTimelineNodes(prev => [...prev, newNode]);
+          lastNodeIdRef.current = newNode.id;
+        }, 50);
+        
+        setInput('');
+      }
     }
-  };
+  }
+  
+  if (interimTranscript) {
+    setInput(interimTranscript);
+  }
+};
   
   // Store the accumulated transcript on the instance so stopPushToTalk can access it
   instance.getAccumulatedTranscript = () => accumulatedFinalTranscript;
