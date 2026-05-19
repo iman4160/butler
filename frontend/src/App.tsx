@@ -1392,61 +1392,107 @@ useEffect(() => {
   };
   
   instance.onresult = async (event: any) => {
-  console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
-  
-  // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
-  if (interactiveMode && !isPushToTalkActiveRef.current) {
-    console.log('🎤 IGNORING - Push-to-talk not active');
-    return;
-  }
+    console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
+    
+    // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
+    if (interactiveMode && !isPushToTalkActiveRef.current) {
+      console.log('🎤 IGNORING - Push-to-talk not active');
+      return;
+    }
+    
+    // Ignore if viewing history
+    if (isViewingHistory) {
+      console.log('🎤 IGNORING - viewing history mode');
+      return;
+    }
+    
+    let finalTranscript = '', interimTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const transcript = result[0].transcript;
+      if (result.isFinal) finalTranscript += transcript;
+      else interimTranscript += transcript;
+    }
+    
+    // Ignore very short transcripts
+    if (finalTranscript && finalTranscript.length < 2) {
+      console.log('🎤 IGNORING - transcript too short');
+      return;
+    }
+    
+    if (finalTranscript) {
+      console.log('🎤 PROCESSING:', finalTranscript);
+      
+      if (interactiveMode) {
+        console.log('💬 Interactive Mode - sending message');
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        await updateDocumentOnly(finalTranscript);
+        await sendStreamingMessage(finalTranscript);
+        setInput('');
+        return;
+      }
+      
+      if (secretaryMode) {
+        // SECRETARY MODE - Check for wake word
+        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+        
+        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+          console.log('🔊 Wake word detected!');
+          setIsProcessingWakeWord(true);
+          setWakeWordTriggered(true);
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          await updateDocumentOnly(cleanedText);
+          await sendStreamingMessage(cleanedText);
+          setTimeout(() => {
+            setIsProcessingWakeWord(false);
+            setWakeWordTriggered(false);
+          }, 2000);
+          setInput('');
+        } else if (!hasWakeWord && !isSpeaking) {
+          console.log('📝 Documenting only');
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          
+          const userMessage: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: finalTranscript,
+            timestamp: new Date().toLocaleTimeString()
+          };
+          setMessages(prev => [...prev, userMessage]);
+          await updateDocumentOnly(finalTranscript);
+          
+          setTimeout(() => {
+            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
+            
+            const newNode: TimelineNode = {
+              id: Date.now().toString(),
+              userMessage: finalTranscript,
+              assistantMessage: '',
+              timestamp: new Date().toISOString(),
+              documentContent: documentSnapshot.content || '',
+              documentSnapshot: documentSnapshot,
+              messagesSnapshot: messagesSnapshot,
+              parentId: lastNodeIdRef.current,
+              branchId: currentBranchId
+            };
+            
+            setTimelineNodes(prev => [...prev, newNode]);
+            lastNodeIdRef.current = newNode.id;
+          }, 50);
+          
+          setInput('');
+        }
+      }
+    }
+    
+    if (interimTranscript) {
+      setInput(interimTranscript);
+    }
+  };
   
   return instance;
 };
-  
-  // Start recognition if not already running
-  if (!recognitionRef.current && (secretaryMode || interactiveMode)) {
-    console.log('🎤 Creating speech recognition... Mode:', interactiveMode ? 'Interactive' : 'Secretary');
-    recognitionRef.current = initSpeechRecognition();
-  }
-  
-  if ((secretaryMode || interactiveMode) && recognitionRef.current) {
-    try {
-      console.log('🎤 Starting recognition...');
-      recognitionRef.current.start();
-    } catch (e: any) {
-      if (e.name !== 'InvalidStateError') console.error('Error starting:', e);
-    }
-  } else if (!secretaryMode && !interactiveMode && recognitionRef.current) {
-    try {
-      console.log('🛑 Stopping recognition...');
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
-    } catch (e) {
-      console.error('Error stopping:', e);
-    }
-  }
-  
-  // EventSource for real-time updates
-  const es = new EventSource(`${API_URL}/events`);
-  es.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      handleRealtimeUpdate(data);
-    } catch (e) {}
-  };
-  setEventSource(es);
-  
-  return () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-        recognitionRef.current = null;
-      } catch (e) {}
-    }
-    if (eventSource) eventSource.close();
-    if (janitorTimeoutRef.current) clearTimeout(janitorTimeoutRef.current);
-  };
-}, [secretaryMode, interactiveMode, voiceResponseEnabled, isViewingHistory]);
 
   const handleRealtimeUpdate = (data: any) => {
   console.log('📡 SSE Event received:', data.type, data);
