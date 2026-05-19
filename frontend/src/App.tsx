@@ -1491,8 +1491,55 @@ useEffect(() => {
     }
   };
   
-  return instance;
-};
+      return instance;
+  };
+  
+  // Start recognition if not already running
+  if (!recognitionRef.current && (secretaryMode || interactiveMode)) {
+    console.log('🎤 Creating speech recognition... Mode:', interactiveMode ? 'Interactive' : 'Secretary');
+    recognitionRef.current = initSpeechRecognition();
+  }
+  
+  if ((secretaryMode || interactiveMode) && recognitionRef.current) {
+    try {
+      console.log('🎤 Starting recognition...');
+      recognitionRef.current.start();
+    } catch (e: any) {
+      if (e.name !== 'InvalidStateError') console.error('Error starting:', e);
+    }
+  } else if (!secretaryMode && !interactiveMode && recognitionRef.current) {
+    try {
+      console.log('🛑 Stopping recognition...');
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    } catch (e) {
+      console.error('Error stopping:', e);
+    }
+  }
+  
+  // EventSource for real-time updates
+  const es = new EventSource(`${API_URL}/events`);
+  es.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleRealtimeUpdate(data);
+    } catch (e) {}
+  };
+  setEventSource(es);
+  
+  return () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+      } catch (e) {}
+    }
+    if (eventSource) eventSource.close();
+    if (janitorTimeoutRef.current) clearTimeout(janitorTimeoutRef.current);
+  };
+}, [secretaryMode, interactiveMode, voiceResponseEnabled, isViewingHistory]);
+
+const handleRealtimeUpdate = (data: any) => {
 
   const handleRealtimeUpdate = (data: any) => {
   console.log('📡 SSE Event received:', data.type, data);
