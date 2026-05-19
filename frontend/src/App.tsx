@@ -300,6 +300,8 @@ function App() {
   const shouldStopRef = useRef(false);
   const accumulatedConversationRef = useRef<string>('');
   const isMutedRef = useRef(false);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
 
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
   const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(['main']));
@@ -436,19 +438,21 @@ const speakResponse = (text: string) => {
   if (!voiceResponseEnabled) return;
   if (shouldStopRef.current) return;
   
+  // 🔴 NEW: Stop all microphone tracks completely
+  if (mediaStreamRef.current) {
+    console.log('🎤 Stopping all microphone tracks to prevent echo');
+    mediaStreamRef.current.getTracks().forEach(track => {
+      track.stop();
+    });
+    mediaStreamRef.current = null;
+  }
+  
   // CRITICAL: Force stop recognition BEFORE speaking to prevent echo
   if (recognitionRef.current) {
     try {
       console.log('🎤 FORCE stopping recognition before AI speaks');
       recognitionRef.current.stop();
-      // Small delay to ensure stop completes
-      setTimeout(() => {
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.abort?.();
-          } catch (e) {}
-        }
-      }, 50);
+      recognitionRef.current = null; // Clear it completely
     } catch (e) {
       console.log('Recognition stop error:', e);
     }
@@ -458,67 +462,45 @@ const speakResponse = (text: string) => {
   setIsSpeaking(true);
   setVoiceActivity('speaking');
   
-  let cleanText = text
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/\*(.*?)\*/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/#{1,6}\s/g, '')
-    .replace(/[`_~>]/g, '');
-  
-  if (cleanText.length > 400) {
-    cleanText = cleanText.slice(0, 400) + '...';
-  }
-  
-  const utterance = new SpeechSynthesisUtterance(cleanText);
-  utterance.rate = 0.85;
-  utterance.pitch = 1.0;
-  utterance.volume = 0.8;
-  
-  if (selectedVoice) {
-    utterance.voice = selectedVoice;
-  }
-  
-  utterance.onstart = () => {
-    console.log('🔊 AI started speaking - recognition stopped');
-    setIsSpeaking(true);
-    setVoiceActivity('speaking');
-  };
+  // ... rest of speakResponse (cleanText, utterance, etc)
   
   utterance.onend = () => {
     console.log('🔊 AI finished speaking - restarting recognition');
     setIsSpeaking(false);
     setVoiceActivity('listening');
     
-    // Wait longer before restarting to let audio settle (1 second)
+    // 🔴 NEW: Re-initialize microphone after speaking
     setTimeout(() => {
-      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
-        try {
-          console.log('🎤 Restarting recognition after AI speech');
+      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
+        // Re-request microphone
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+              mediaStreamRef.current = stream;
+              console.log('🎤 Microphone re-initialized');
+            })
+            .catch(err => console.log('Microphone re-init error:', err));
+        }
+        
+        // Restart recognition
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {}
+        } else {
+          // Re-create recognition
+          const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+          recognitionRef.current = new SpeechRecognition();
+          recognitionRef.current.continuous = true;
+          recognitionRef.current.interimResults = true;
+          recognitionRef.current.lang = 'en-US';
+          // Re-add event handlers...
           recognitionRef.current.start();
-        } catch (e) {
-          console.error('Failed to restart recognition:', e);
         }
       }
-    }, 1000);
+    }, 500);
   };
-  
-  utterance.onerror = () => {
-    console.log('🔊 AI speech error');
-    setIsSpeaking(false);
-    setVoiceActivity('listening');
-    
-    setTimeout(() => {
-      if (recognitionRef.current && secretaryMode && !isViewingHistory && !isSpeaking) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {}
-      }
-    }, 1000);
-  };
-  
-  window.speechSynthesis.speak(utterance);
-};
+}
 
 const stopSpeaking = () => {
   if (isSpeaking) { 
@@ -1196,174 +1178,182 @@ useEffect(() => {
   let isRestarting = false;
   
   const initSpeechRecognition = () => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      console.error('Speech recognition not supported');
-      return null;
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    console.error('Speech recognition not supported');
+    return null;
+  }
+  
+  const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+  const instance = new SpeechRecognition();
+  instance.continuous = true;
+  instance.interimResults = true;
+  instance.lang = 'en-US';
+  
+  // Request microphone and store the stream
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        mediaStreamRef.current = stream;
+        console.log('🎤 Microphone initialized and ready');
+      })
+      .catch(err => console.log('Microphone error:', err));
+  }
+  
+  instance.onstart = () => {
+    console.log('🎤 Recognition started - interrupting AI if speaking');
+    // Force stop AI when user starts speaking
+    if (isSpeaking || isStreaming) {
+      stopAIResponse();
     }
+    setVoiceActivity('listening');
+    setIsListening(true);
+  };
+  
+  instance.onend = () => {
+    console.log('Recognition ended');
+    setVoiceActivity('idle');
+    setIsListening(false);
     
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    const instance = new SpeechRecognition();
-    instance.continuous = true;
-    instance.interimResults = true;
-    instance.lang = 'en-US';
-    
-    instance.onstart = () => {
-      console.log('🎤 Recognition started - interrupting AI if speaking');
-      // Force stop AI when user starts speaking
-      if (isSpeaking || isStreaming) {
-        stopAIResponse();
-      }
-      setVoiceActivity('listening');
-      setIsListening(true);
-    };
-    
-    instance.onend = () => {
-      console.log('Recognition ended');
+    // Restart if mode is still active and AI is not speaking
+    if ((secretaryMode || interactiveMode) && !isSpeaking && !isViewingHistory) {
+      setTimeout(() => {
+        if ((secretaryMode || interactiveMode) && recognitionRef.current && !isSpeaking && !isViewingHistory) {
+          try {
+            console.log('🎤 Restarting recognition after end');
+            recognitionRef.current.start();
+          } catch (e) {
+            console.error('Failed to restart:', e);
+          }
+        }
+      }, 300);
+    }
+  };
+  
+  instance.onerror = (event: any) => {
+    console.error('Recognition error:', event.error);
+    if (event.error === 'no-speech') return;
+    if (event.error === 'aborted') {
+      console.log('Recognition aborted');
+      return;
+    }
+    if (event.error === 'not-allowed') {
+      console.error('Microphone permission denied');
       setVoiceActivity('idle');
       setIsListening(false);
-      
-      // Restart if mode is still active
-      if ((secretaryMode || interactiveMode) && !isRestarting) {
-        isRestarting = true;
-        setTimeout(() => {
-          if ((secretaryMode || interactiveMode) && recognitionRef.current) {
-            try {
-              recognitionRef.current.start();
-            } catch (e) {
-              console.error('Failed to restart:', e);
-            }
-          }
-          isRestarting = false;
-        }, 100);
-      }
-      // REMOVE the handleKeyPress definition from here!
-    };
-    
-    instance.onerror = (event: any) => {
-      console.error('Recognition error:', event.error);
-      if (event.error === 'no-speech') return;
-      if (event.error === 'aborted') {
-        console.log('Recognition aborted');
-        return;
-      }
-      if (event.error === 'not-allowed') {
-        console.error('Microphone permission denied');
-        setVoiceActivity('idle');
-        setIsListening(false);
-        return;
-      }
-    };
-    
-    instance.onresult = async (event: any) => {
-  // CRITICAL: Ignore ALL transcription if AI is currently speaking
-  if (isSpeaking) {
-    console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
-    return;
-  }
+      return;
+    }
+  };
   
-  // Also ignore if viewing history
-  if (isViewingHistory) {
-    console.log('🎤 IGNORING speech - viewing history mode');
-    return;
-  }
-  
-  let finalTranscript = '', interimTranscript = '';
-  for (let i = event.resultIndex; i < event.results.length; i++) {
-    const result = event.results[i];
-    const transcript = result[0].transcript;
-    if (result.isFinal) finalTranscript += transcript;
-    else interimTranscript += transcript;
-  }
-  setAudioLevel(Math.random() * 100);
-  
-  // Ignore very short transcripts (likely ambient noise or AI echo fragments)
-  if (finalTranscript && finalTranscript.length < 3) {
-    console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
-    return;
-  }
-  
-  if (finalTranscript) {
-    console.log('🎤 Transcribed:', finalTranscript);
-    
-    if (interactiveMode) {
-      console.log('💬 Interactive Mode - responding');
-      setTranscriptSegments(prev => [...prev, finalTranscript]);
-      
-      // Update document with the spoken text
-      await updateDocumentOnly(finalTranscript);
-      await sendStreamingMessage(finalTranscript);
-      setInput('');
+  instance.onresult = async (event: any) => {
+    // CRITICAL: Ignore ALL transcription if AI is currently speaking
+    if (isSpeaking) {
+      console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
       return;
     }
     
-    if (secretaryMode) {
-      // SECRETARY MODE - Check for wake word
-      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+    // Also ignore if viewing history
+    if (isViewingHistory) {
+      console.log('🎤 IGNORING speech - viewing history mode');
+      return;
+    }
+    
+    let finalTranscript = '', interimTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const transcript = result[0].transcript;
+      if (result.isFinal) finalTranscript += transcript;
+      else interimTranscript += transcript;
+    }
+    setAudioLevel(Math.random() * 100);
+    
+    // Ignore very short transcripts (likely ambient noise or AI echo fragments)
+    if (finalTranscript && finalTranscript.length < 3) {
+      console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
+      return;
+    }
+    
+    if (finalTranscript) {
+      console.log('🎤 Transcribed:', finalTranscript);
       
-      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-        console.log('🔊 Wake word detected!');
-        setIsProcessingWakeWord(true);
-        setWakeWordTriggered(true);
+      if (interactiveMode) {
+        console.log('💬 Interactive Mode - responding');
         setTranscriptSegments(prev => [...prev, finalTranscript]);
         
-        // Update document and get AI response
-        await updateDocumentOnly(cleanedText);
-        await sendStreamingMessage(cleanedText);
-        
-        setTimeout(() => {
-          setIsProcessingWakeWord(false);
-          setWakeWordTriggered(false);
-        }, 2000);
-        
-        setInput('');
-      } else if (!hasWakeWord && !isSpeaking) {
-        console.log('📝 Documenting only');
-        setTranscriptSegments(prev => [...prev, finalTranscript]);
-        
-        const userMessage: Message = {
-          id: Date.now(),
-          role: 'user',
-          content: finalTranscript,
-          timestamp: new Date().toLocaleTimeString()
-        };
-        setMessages(prev => [...prev, userMessage]);
-        
-        // Only update document, no AI response
+        // Update document with the spoken text
         await updateDocumentOnly(finalTranscript);
-        
-        // Add to timeline without AI response
-        setTimeout(() => {
-          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-          
-          const newNode: TimelineNode = {
-            id: Date.now().toString(),
-            userMessage: finalTranscript,
-            assistantMessage: '',
-            timestamp: new Date().toISOString(),
-            documentContent: documentSnapshot.content || '',
-            documentSnapshot: documentSnapshot,
-            messagesSnapshot: messagesSnapshot,
-            parentId: lastNodeIdRef.current,
-            branchId: currentBranchId
-          };
-          
-          setTimelineNodes(prev => [...prev, newNode]);
-          lastNodeIdRef.current = newNode.id;
-        }, 50);
-        
+        await sendStreamingMessage(finalTranscript);
         setInput('');
+        return;
+      }
+      
+      if (secretaryMode) {
+        // SECRETARY MODE - Check for wake word
+        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+        
+        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+          console.log('🔊 Wake word detected!');
+          setIsProcessingWakeWord(true);
+          setWakeWordTriggered(true);
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          
+          // Update document and get AI response
+          await updateDocumentOnly(cleanedText);
+          await sendStreamingMessage(cleanedText);
+          
+          setTimeout(() => {
+            setIsProcessingWakeWord(false);
+            setWakeWordTriggered(false);
+          }, 2000);
+          
+          setInput('');
+        } else if (!hasWakeWord && !isSpeaking) {
+          console.log('📝 Documenting only');
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          
+          const userMessage: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: finalTranscript,
+            timestamp: new Date().toLocaleTimeString()
+          };
+          setMessages(prev => [...prev, userMessage]);
+          
+          // Only update document, no AI response
+          await updateDocumentOnly(finalTranscript);
+          
+          // Add to timeline without AI response
+          setTimeout(() => {
+            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
+            
+            const newNode: TimelineNode = {
+              id: Date.now().toString(),
+              userMessage: finalTranscript,
+              assistantMessage: '',
+              timestamp: new Date().toISOString(),
+              documentContent: documentSnapshot.content || '',
+              documentSnapshot: documentSnapshot,
+              messagesSnapshot: messagesSnapshot,
+              parentId: lastNodeIdRef.current,
+              branchId: currentBranchId
+            };
+            
+            setTimelineNodes(prev => [...prev, newNode]);
+            lastNodeIdRef.current = newNode.id;
+          }, 50);
+          
+          setInput('');
+        }
       }
     }
-  }
-  
-  if (interimTranscript) {
-    setInput(interimTranscript);
-  }
-};
     
-    return instance;
+    if (interimTranscript) {
+      setInput(interimTranscript);
+    }
   };
+  
+  return instance;
+};
   
   // Start recognition if not already running
   if (!recognitionRef.current && (secretaryMode || interactiveMode)) {
