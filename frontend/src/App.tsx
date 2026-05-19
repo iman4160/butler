@@ -1202,7 +1202,7 @@ if (voiceResponseEnabled) {
   }
 };
 
-  // Session Management
+// Session Management
   const loadSessions = async () => {
   if (isSpeaking || isStreaming) {
     stopAIResponse();
