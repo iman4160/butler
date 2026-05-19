@@ -3740,3 +3740,48 @@ body {
     font-size: 16px; /* Prevents zoom on focus in iOS */
   }
 }
+
+/* Export Dropdown - Fix hover gap */
+.export-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.export-dropdown .export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 140px;
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s;
+  margin-top: 0;
+}
+
+.export-dropdown:hover .export-menu,
+.export-dropdown .export-menu:hover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.export-dropdown .export-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.export-dropdown .export-menu button:hover {
+  background: #2d3748;
+  color: #F5C451;
+}
