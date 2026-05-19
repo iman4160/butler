@@ -1996,21 +1996,6 @@ const branchFromNode = async (node: TimelineNode) => {
     fontSize: '0.8rem'
   }}>
     <span>🔍 Viewing historical conversation point</span>
-    <button 
-      onClick={returnToCurrent}
-      style={{
-        background: '#F5C451',
-        color: '#000',
-        border: 'none',
-        padding: '6px 16px',
-        borderRadius: '6px',
-        cursor: 'pointer',
-        fontWeight: 'bold',
-        fontSize: '0.75rem'
-      }}
-    >
-      Return to Latest → 
-    </button>
   </div>
 )}
 
