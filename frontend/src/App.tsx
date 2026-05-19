@@ -490,78 +490,53 @@ const speakResponse = (text: string) => {
   };
   
   utterance.onend = () => {
-    console.log('🔊 AI finished speaking - restarting recognition');
-    
-    // Record when AI finished speaking
-    (window as any).lastAISpeechEndTime = Date.now();
-    
-    setIsSpeaking(false);
-    setVoiceActivity('listening');
-    
-    // CRITICAL: Re-initialize recognition after speaking
-    setTimeout(() => {
-      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
-        // Stop any existing recognition
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
-          } catch (e) {}
-        }
-        
-        // Create new recognition instance
-        const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-        const newRecognition = new SpeechRecognition();
-        newRecognition.continuous = true;
-        newRecognition.interimResults = true;
-        newRecognition.lang = 'en-US';
-        
-        // Copy over the event handlers
-        newRecognition.onstart = recognitionRef.current?.onstart;
-        newRecognition.onend = recognitionRef.current?.onend;
-        newRecognition.onerror = recognitionRef.current?.onerror;
-        newRecognition.onresult = recognitionRef.current?.onresult;
-        
-        recognitionRef.current = newRecognition;
-        
+  console.log('🔊 AI finished speaking - restarting recognition');
+  
+  // Record when AI finished speaking
+  (window as any).lastAISpeechEndTime = Date.now();
+  
+  setIsSpeaking(false);
+  setVoiceActivity('listening');
+  
+  // CRITICAL: Re-initialize recognition after speaking
+  setTimeout(() => {
+    if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
+      // Don't try to copy handlers - just create fresh recognition
+      // The useEffect will handle re-initialization
+      if (recognitionRef.current) {
         try {
-          recognitionRef.current.start();
-          console.log('🎤 Recognition re-initialized and started after speech');
-        } catch (e) {
-          console.error('Failed to restart recognition:', e);
-        }
+          recognitionRef.current.stop();
+          recognitionRef.current = null;
+        } catch (e) {}
       }
-    }, 500);
-  };
+      
+      // Signal that recognition needs to be recreated
+      // The useEffect will recreate it on next render
+      window.dispatchEvent(new Event('resize'));
+    }
+  }, 500);
+};
   
   utterance.onerror = (event) => {
-    console.log('🔊 AI speech error:', event.error);
-    
-    // Also record time on error
-    (window as any).lastAISpeechEndTime = Date.now();
-    
-    setIsSpeaking(false);
-    setVoiceActivity('listening');
-    
-    // CRITICAL: Re-initialize recognition even on error
-    setTimeout(() => {
-      if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
-        // Re-initialize recognition
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.stop();
-            recognitionRef.current = null;
-          } catch (e) {}
-        }
-        
-        // Restart the recognition process
-        if (recognitionRef.current === null) {
-          // The useEffect will recreate recognition
-          window.dispatchEvent(new Event('resize')); // Force a re-render
-        }
+  console.log('🔊 AI speech error:', event.error);
+  
+  (window as any).lastAISpeechEndTime = Date.now();
+  
+  setIsSpeaking(false);
+  setVoiceActivity('listening');
+  
+  setTimeout(() => {
+    if ((secretaryMode || interactiveMode) && !isViewingHistory && !isSpeaking) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+          recognitionRef.current = null;
+        } catch (e) {}
       }
-    }, 500);
-  };
+      window.dispatchEvent(new Event('resize'));
+    }
+  }, 500);
+};
   
   window.speechSynthesis.speak(utterance);
 };
@@ -1538,8 +1513,6 @@ useEffect(() => {
     if (janitorTimeoutRef.current) clearTimeout(janitorTimeoutRef.current);
   };
 }, [secretaryMode, interactiveMode, voiceResponseEnabled, isViewingHistory]);
-
-const handleRealtimeUpdate = (data: any) => {
 
   const handleRealtimeUpdate = (data: any) => {
   console.log('📡 SSE Event received:', data.type, data);
