@@ -799,55 +799,16 @@ const startPushToTalk = () => {
   
   console.log('🎤 Push-to-talk: STARTED - microphone active');
   
+  // 🔴 Clear any previous accumulated transcript
+  (window as any).accumulatedTranscript = '';
+  
   // Set BOTH state and ref
   setIsPushToTalkActive(true);
   isPushToTalkActiveRef.current = true;
   
   setVoiceActivity('listening');
   
-  // CRITICAL: Make sure recognition is running
-  if (!recognitionRef.current) {
-    console.log('🎤 Recognition not running, re-initializing...');
-    // Force re-initialization
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.continuous = true;
-    recognitionRef.current.interimResults = true;
-    recognitionRef.current.lang = 'en-US';
-    
-    // Add basic handlers
-    recognitionRef.current.onstart = () => {
-      console.log('🎤 Recognition started');
-      setVoiceActivity('listening');
-      setIsListening(true);
-    };
-    
-    recognitionRef.current.onend = () => {
-      console.log('Recognition ended');
-      setVoiceActivity('idle');
-      setIsListening(false);
-    };
-    
-    recognitionRef.current.onerror = (event: any) => {
-      console.error('Recognition error:', event.error);
-    };
-  }
-  
-  try {
-    recognitionRef.current.start();
-    console.log('🎤 Recognition started for push-to-talk');
-  } catch (e: any) {
-    if (e.name === 'InvalidStateError') {
-      console.log('Recognition already running');
-    } else {
-      console.error('Error starting recognition:', e);
-    }
-  }
-  
-  if (pushToTalkTimeoutRef.current) {
-    clearTimeout(pushToTalkTimeoutRef.current);
-    pushToTalkTimeoutRef.current = null;
-  }
+  // Rest of your code...
 };
 
 const stopPushToTalk = async () => {
