@@ -1974,6 +1974,35 @@ const branchFromNode = async (node: TimelineNode) => {
         <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
           {messageCount} {messageCount === 1 ? 'message' : 'messages'}
         </span>
+        
+        {/* DELETE BUTTON - Only show for non-main branches */}
+        {!isMain && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent collapsing when clicking delete
+              if (confirm(`Delete branch "${branchStyle.name}"? This cannot be undone.`)) {
+                deleteBranch(branchId);
+              }
+            }}
+            title="Delete branch"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#ef4444',
+              cursor: 'pointer',
+              padding: '4px',
+              borderRadius: '4px',
+              opacity: 0.6,
+              transition: 'opacity 0.2s',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
       </div>
       
       {/* Branch Content - Only show if expanded */}
@@ -2054,48 +2083,83 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
         backgroundColor: branchStyle.bgTint,
         borderLeft: `3px solid ${branchStyle.color}`,
         borderRadius: '6px',
-        padding: '8px 12px',
+        padding: '10px 12px',
         position: 'relative',
-        cursor: 'pointer'
+        cursor: 'pointer',
+        transition: 'all 0.2s'
       }}
       onMouseEnter={() => setHoveredNodeId(node.id)}
       onMouseLeave={() => setHoveredNodeId(null)}
-      onClick={() => restoreFromNode(node)}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
-          <span style={{ fontSize: '10px', opacity: 0.6 }}>
-            {new Date(node.timestamp).toLocaleTimeString()}
-          </span>
+      {/* Message content - click to restore */}
+      <div onClick={() => restoreFromNode(node)} style={{ cursor: 'pointer' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
+            <span style={{ fontSize: '10px', opacity: 0.6 }}>
+              {new Date(node.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button 
+              onClick={(e) => { e.stopPropagation(); copyNodeMessage(node.userMessage, node.id); }}
+              title="Copy message"
+              style={{ 
+                background: 'none', 
+                border: 'none', 
+                cursor: 'pointer', 
+                padding: '4px',
+                borderRadius: '4px',
+                color: '#888',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              {isCopied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <button 
-            className="timeline-node-action branch-btn"
-            onClick={(e) => { e.stopPropagation(); branchFromNode(node); }}
-            title="Create new branch from here"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
-          >
-            <GitBranch size={10} />
-          </button>
-          <button 
-            className="timeline-node-action copy-btn"
-            onClick={(e) => { e.stopPropagation(); copyNodeMessage(node.userMessage, node.id); }}
-            title="Copy message"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}
-          >
-            {isCopied ? <Check size={10} /> : <Copy size={10} />}
-          </button>
+        <div style={{ 
+          fontSize: '12px',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          marginBottom: '10px'
+        }}>
+          "{node.userMessage.slice(0, 70)}{node.userMessage.length > 70 ? '...' : ''}"
         </div>
       </div>
-      <div style={{ 
-        fontSize: '12px',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }}>
-        "{node.userMessage.slice(0, 60)}{node.userMessage.length > 60 ? '...' : ''}"
+      
+      {/* BRANCH BUTTON - Bottom right corner */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+        <button
+          onClick={(e) => { 
+            e.stopPropagation(); 
+            branchFromNode(node); 
+          }}
+          style={{
+            background: branchStyle.color,
+            color: '#000',
+            border: 'none',
+            padding: '4px 10px',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '11px',
+            fontWeight: 'bold',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            transition: 'transform 0.1s'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+        >
+          <GitBranch size={10} />
+          Branch
+        </button>
       </div>
+      
+      {/* Tooltip on hover */}
       {isHovered && (
         <div style={{
           position: 'absolute',
@@ -2103,20 +2167,26 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
           left: '0',
           backgroundColor: '#1a1a1a',
           border: `1px solid ${branchStyle.color}`,
-          borderRadius: '4px',
-          padding: '8px',
+          borderRadius: '6px',
+          padding: '10px',
           zIndex: 1000,
-          width: '250px',
+          width: '280px',
           fontSize: '11px',
-          pointerEvents: 'none'
+          pointerEvents: 'none',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          marginBottom: '8px'
         }}>
-          <strong>{node.userMessage}</strong>
+          <div style={{ fontWeight: 'bold', marginBottom: '6px', color: branchStyle.color }}>Message:</div>
+          <div style={{ marginBottom: '8px' }}>{node.userMessage}</div>
           {node.assistantMessage && (
             <>
-              <div style={{ marginTop: '4px', fontSize: '10px', opacity: 0.7 }}>Response:</div>
-              <div>{node.assistantMessage.slice(0, 100)}...</div>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px', color: branchStyle.color, fontSize: '10px' }}>Response preview:</div>
+              <div style={{ opacity: 0.8 }}>{node.assistantMessage.slice(0, 120)}...</div>
             </>
           )}
+          <div style={{ marginTop: '8px', fontSize: '9px', opacity: 0.5, borderTop: '1px solid #333', paddingTop: '6px' }}>
+            Click message to restore • Click "Branch" to create new path
+          </div>
         </div>
       )}
     </div>
