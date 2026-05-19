@@ -301,6 +301,7 @@ function App() {
   const accumulatedConversationRef = useRef<string>('');
   const isMutedRef = useRef(false);
 
+  const [hasTriedCreate, setHasTriedCreate] = useState(false);
 
 
   const [isMuted, setIsMuted] = useState(false);
@@ -1213,70 +1214,25 @@ if (voiceResponseEnabled) {
   }
   
   try {
-    const res = await fetch(`${API_URL}/sessions`);
-    let data = await res.json();
+    // Try to load existing session from sessionStorage
+    const savedSessionId = sessionStorage.getItem('butler_session');
     
-    // Filter sessions for this user only
-    data = data.filter((session: Session) => session.userId === userId);
-    
-    data.sort((a: Session, b: Session) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-    });
-    setSessions(data);
-    
-    if (currentSessionId) {
-      const currentSession = data.find(s => s.id === currentSessionId);
-      if (currentSession && currentSession.title !== livingDocument.title) {
-        setLivingDocument(prev => ({ ...prev, title: currentSession.title }));
-        setEditTitleValue(currentSession.title);
+    if (savedSessionId) {
+      // Check if it still exists on backend
+      const res = await fetch(`${API_URL}/sessions/${savedSessionId}`);
+      if (res.ok) {
+        setCurrentSessionId(savedSessionId);
+        await loadSession(savedSessionId);
+        return;
       }
     }
     
-    // Load last session for this user, or create new one
-    if (data.length > 0 && !currentSessionId) {
-      setCurrentSessionId(data[0].id);
-      await loadSession(data[0].id);
-    } else if (data.length === 0 && !currentSessionId && !isCreatingSession) {
-      setIsCreatingSession(true);
-      await createNewSession();
-      setIsCreatingSession(false);
-    }
+    // If no valid session, create new one
+    await createNewSession();
   } catch (error) { 
     console.error('Failed to load sessions:', error); 
   }
 };
-
-  const loadSession = async (sessionId: string) => {
-    try {
-      const res = await fetch(`${API_URL}/sessions/${sessionId}`);
-      const session = await res.json();
-      setMessages(session.messages || []);
-      if (session.timelineNodes) {
-        setTimelineNodes(session.timelineNodes);
-        if (session.timelineNodes.length > 0) lastNodeIdRef.current = session.timelineNodes[session.timelineNodes.length - 1].id;
-      }
-      if (session.document) { setLivingDocument({ ...session.document, title: session.document.title || 'Notes' }); setEditTitleValue(session.document.title || 'Notes'); }
-      if (session.activity) setActivities(session.activity);
-      if (session.branches) {
-        setBranches(session.branches.map((b: Branch) => ({ ...b, collapsed: false })));
-        const maxBranchNumber = session.branches.reduce((max, b) => { const num = parseInt(b.name.split(' ')[1]) || 0; return Math.max(max, num); }, 0);
-        setNextBranchNumber(maxBranchNumber + 1);
-      }
-      if (session.nextBranchNumber) setNextBranchNumber(session.nextBranchNumber);
-      if (session.canvasFiles && session.canvasFiles.length > 0) { setCanvasFiles(session.canvasFiles); setShowCodeCanvas(true); }
-      else { setCanvasFiles([]); setShowCodeCanvas(false); }
-      if (session.decisions) setDecisions(session.decisions);
-      setCurrentSessionId(sessionId);
-      setIsViewingHistory(false); setActiveRestoredNodeId(null); setSearchTerm(''); setTranscriptSegments([]);
-      if (session.branches && session.branches.length > 0) {
-        const latestBranch = session.branches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-        setCurrentBranchId(latestBranch.id);
-        if (latestBranch.document) setLivingDocument(latestBranch.document);
-      } else { setCurrentBranchId('main'); }
-    } catch (error) { console.error('Failed to load session:', error); }
-  };
 
   const saveCurrentSession = async () => {
     if (!currentSessionId) return;
@@ -1288,34 +1244,14 @@ if (voiceResponseEnabled) {
   const createNewSession = async () => {
   try {
     if (currentSessionId) await saveCurrentSession();
-    const res = await fetch(`${API_URL}/sessions`, { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ title: 'New Chat', userId: userId })
+    const res = await fetch(`${API_URL}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'New Chat' })
     });
     const data = await res.json();
-    setShowCodeCanvas(false);
-    setShowChatSidebar(false);
-    setShowDocumentPanel(false);
-    setShowTimeline(false);
-    setCanvasFiles([]);
-    setActiveCanvasFile('');
-    setMessages([]);
-    setTimelineNodes([]);
-    setBranches([]);
-    setDecisions([]);
-    setNextBranchNumber(1);
-    setCurrentBranchId('main');
-    setActiveRestoredNodeId(null);
-    lastNodeIdRef.current = null;
-    setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
-    setEditTitleValue('Notes');
-    setIsViewingHistory(false);
-    setSearchTerm('');
-    setTranscriptSegments([]);
-    if (abortControllerRef.current) abortControllerRef.current.abort();
-    stopSpeaking();
-    await loadSessions();
+    sessionStorage.setItem('butler_session', data.sessionId);
+    setCurrentSessionId(data.sessionId);
     await loadSession(data.sessionId);
   } catch (error) { 
     console.error('Failed to create session:', error); 
@@ -1835,7 +1771,7 @@ const branchFromNode = async (node: TimelineNode) => {
 
         <div className="chat-input-area">
           <div className="chat-input-wrapper">
-            <input
+            <<input
               value={input}
               onChange={(e) => {
                 if ((secretaryMode || interactiveMode) && (isSpeaking || isStreaming)) {
@@ -1843,9 +1779,9 @@ const branchFromNode = async (node: TimelineNode) => {
                 }
                 setInput(e.target.value);
               }}
-              placeholder={secretaryMode ? "Secretary mode active - speak naturally" : "Type your message..."}
+              placeholder={isViewingHistory ? "🔒 Viewing past conversation - click 'Return to Current' to chat" : (secretaryMode ? "Secretary mode active - speak naturally" : "Type your message...")}
               onKeyPress={handleKeyPress}
-              disabled={secretaryMode}
+              disabled={secretaryMode || isViewingHistory}
             />
             <div className="voice-controls">
               <button
