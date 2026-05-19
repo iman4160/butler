@@ -301,6 +301,8 @@ function App() {
   const accumulatedConversationRef = useRef<string>('');
   const isMutedRef = useRef(false);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
+  const pushToTalkTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
 
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
@@ -779,6 +781,32 @@ const buildMessageTree = () => {
   return branchGroups;
 };
 
+const startPushToTalk = () => {
+  if (!interactiveMode) {
+    console.log('Push-to-talk: Only available in Interactive Mode');
+    return;
+  }
+  
+  console.log('🎤 Push-to-talk: STARTED - microphone active');
+  setIsPushToTalkActive(true);
+  setVoiceActivity('listening');
+  
+  if (pushToTalkTimeoutRef.current) {
+    clearTimeout(pushToTalkTimeoutRef.current);
+    pushToTalkTimeoutRef.current = null;
+  }
+};
+
+const stopPushToTalk = () => {
+  console.log('🎤 Push-to-talk: STOPPED - microphone inactive');
+  setIsPushToTalkActive(false);
+  setVoiceActivity('idle');
+  
+  pushToTalkTimeoutRef.current = setTimeout(() => {
+    pushToTalkTimeoutRef.current = null;
+  }, 100);
+};
+
   // Timeline Functions
   // ========== Timeline Functions ==========
 const addToTimeline = (userMessage: string, assistantMessage: string) => {
@@ -1216,22 +1244,8 @@ useEffect(() => {
   instance.interimResults = true;
   instance.lang = 'en-US';
   
-  // Request microphone and store the stream
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        mediaStreamRef.current = stream;
-        console.log('🎤 Microphone initialized and ready');
-      })
-      .catch(err => console.log('Microphone error:', err));
-  }
-  
   instance.onstart = () => {
-    console.log('🎤 Recognition started - interrupting AI if speaking');
-    // Force stop AI when user starts speaking
-    if (isSpeaking || isStreaming) {
-      stopAIResponse();
-    }
+    console.log('🎤 Recognition started');
     setVoiceActivity('listening');
     setIsListening(true);
   };
@@ -1240,178 +1254,115 @@ useEffect(() => {
     console.log('Recognition ended');
     setVoiceActivity('idle');
     setIsListening(false);
-    
-    // Restart if mode is still active and AI is not speaking
-    if ((secretaryMode || interactiveMode) && !isSpeaking && !isViewingHistory) {
-      setTimeout(() => {
-        if ((secretaryMode || interactiveMode) && recognitionRef.current && !isSpeaking && !isViewingHistory) {
-          try {
-            console.log('🎤 Restarting recognition after end');
-            recognitionRef.current.start();
-          } catch (e) {
-            console.error('Failed to restart:', e);
-          }
-        }
-      }, 300);
-    }
   };
   
   instance.onerror = (event: any) => {
     console.error('Recognition error:', event.error);
-    if (event.error === 'no-speech') return;
-    if (event.error === 'aborted') {
-      console.log('Recognition aborted');
-      return;
-    }
     if (event.error === 'not-allowed') {
       console.error('Microphone permission denied');
       setVoiceActivity('idle');
       setIsListening(false);
-      return;
     }
   };
   
   instance.onresult = async (event: any) => {
-  // CRITICAL: Ignore ALL transcription if AI is currently speaking
-  if (isSpeaking) {
-    console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
-    return;
-  }
-  
-  // Also ignore if viewing history
-  if (isViewingHistory) {
-    console.log('🎤 IGNORING speech - viewing history mode');
-    return;
-  }
-  
-  let finalTranscript = '', interimTranscript = '';
-  for (let i = event.resultIndex; i < event.results.length; i++) {
-    const result = event.results[i];
-    const transcript = result[0].transcript;
-    if (result.isFinal) finalTranscript += transcript;
-    else interimTranscript += transcript;
-  }
-  setAudioLevel(Math.random() * 100);
-  
-  // Ignore very short transcripts (likely ambient noise)
-  if (finalTranscript && finalTranscript.length < 3) {
-    console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
-    return;
-  }
-  
-  // 🔴 ONLY filter echo if AI just finished speaking (within last 2 seconds)
-  const now = Date.now();
-  const timeSinceAISpoke = now - (window as any).lastAISpeechEndTime || 9999;
-  const isInEchoWindow = timeSinceAISpoke < 2000; // 2 second window after AI speaks
-  
-  if (isInEchoWindow && finalTranscript) {
-    // Check if this sounds like AI echo (only during the echo window)
-    const echoPatterns = [
-      /\b(here'?s|here is)\s+(a|an)\s+(code|example)\b/i,
-      /\b(i'?ll|i will)\s+(show|explain)\b/i,
-      /\b(let me)\s+(show|explain)\b/i,
-      /```/,  // Code block indicator
-    ];
-    
-    let isEcho = false;
-    for (const pattern of echoPatterns) {
-      if (pattern.test(finalTranscript)) {
-        isEcho = true;
-        console.log('🎤 IGNORING - Echo detected within 2 seconds of AI speech:', finalTranscript.slice(0, 50));
-        break;
-      }
-    }
-    
-    // Also ignore if very long during echo window (AI responses are long)
-    if (!isEcho && finalTranscript.length > 120) {
-      isEcho = true;
-      console.log('🎤 IGNORING - Long transcript within echo window');
-    }
-    
-    if (isEcho) {
-      return; // Ignore this echo
-    }
-  }
-  
-  if (finalTranscript) {
-    console.log('🎤 Transcribed (USER SPEECH):', finalTranscript);
-    
-    if (interactiveMode) {
-      console.log('💬 Interactive Mode - responding');
-      setTranscriptSegments(prev => [...prev, finalTranscript]);
-      
-      // Update document with the spoken text
-      await updateDocumentOnly(finalTranscript);
-      await sendStreamingMessage(finalTranscript);
-      setInput('');
+    // For Interactive Mode: ONLY process if push-to-talk is active
+    if (interactiveMode && !isPushToTalkActive) {
+      console.log('🎤 IGNORING - Push-to-talk not active');
       return;
     }
     
-    if (secretaryMode) {
-      // SECRETARY MODE - Check for wake word
-      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+    // Ignore if viewing history
+    if (isViewingHistory) {
+      console.log('🎤 IGNORING - viewing history mode');
+      return;
+    }
+    
+    let finalTranscript = '', interimTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const transcript = result[0].transcript;
+      if (result.isFinal) finalTranscript += transcript;
+      else interimTranscript += transcript;
+    }
+    setAudioLevel(Math.random() * 100);
+    
+    // Ignore very short transcripts
+    if (finalTranscript && finalTranscript.length < 2) {
+      console.log('🎤 IGNORING - transcript too short');
+      return;
+    }
+    
+    if (finalTranscript) {
+      console.log('🎤 Transcribed:', finalTranscript);
       
-      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-        console.log('🔊 Wake word detected!');
-        setIsProcessingWakeWord(true);
-        setWakeWordTriggered(true);
+      if (interactiveMode) {
+        console.log('💬 Interactive Mode - responding');
         setTranscriptSegments(prev => [...prev, finalTranscript]);
-        
-        // Update document and get AI response
-        await updateDocumentOnly(cleanedText);
-        await sendStreamingMessage(cleanedText);
-        
-        setTimeout(() => {
-          setIsProcessingWakeWord(false);
-          setWakeWordTriggered(false);
-        }, 2000);
-        
-        setInput('');
-      } else if (!hasWakeWord && !isSpeaking) {
-        console.log('📝 Documenting only');
-        setTranscriptSegments(prev => [...prev, finalTranscript]);
-        
-        const userMessage: Message = {
-          id: Date.now(),
-          role: 'user',
-          content: finalTranscript,
-          timestamp: new Date().toLocaleTimeString()
-        };
-        setMessages(prev => [...prev, userMessage]);
-        
-        // Only update document, no AI response
         await updateDocumentOnly(finalTranscript);
-        
-        // Add to timeline without AI response
-        setTimeout(() => {
-          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-          
-          const newNode: TimelineNode = {
-            id: Date.now().toString(),
-            userMessage: finalTranscript,
-            assistantMessage: '',
-            timestamp: new Date().toISOString(),
-            documentContent: documentSnapshot.content || '',
-            documentSnapshot: documentSnapshot,
-            messagesSnapshot: messagesSnapshot,
-            parentId: lastNodeIdRef.current,
-            branchId: currentBranchId
-          };
-          
-          setTimelineNodes(prev => [...prev, newNode]);
-          lastNodeIdRef.current = newNode.id;
-        }, 50);
-        
+        await sendStreamingMessage(finalTranscript);
         setInput('');
+        return;
+      }
+      
+      if (secretaryMode) {
+        // SECRETARY MODE - Check for wake word
+        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+        
+        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+          console.log('🔊 Wake word detected!');
+          setIsProcessingWakeWord(true);
+          setWakeWordTriggered(true);
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          await updateDocumentOnly(cleanedText);
+          await sendStreamingMessage(cleanedText);
+          setTimeout(() => {
+            setIsProcessingWakeWord(false);
+            setWakeWordTriggered(false);
+          }, 2000);
+          setInput('');
+        } else if (!hasWakeWord && !isSpeaking) {
+          console.log('📝 Documenting only');
+          setTranscriptSegments(prev => [...prev, finalTranscript]);
+          
+          const userMessage: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: finalTranscript,
+            timestamp: new Date().toLocaleTimeString()
+          };
+          setMessages(prev => [...prev, userMessage]);
+          await updateDocumentOnly(finalTranscript);
+          
+          setTimeout(() => {
+            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
+            
+            const newNode: TimelineNode = {
+              id: Date.now().toString(),
+              userMessage: finalTranscript,
+              assistantMessage: '',
+              timestamp: new Date().toISOString(),
+              documentContent: documentSnapshot.content || '',
+              documentSnapshot: documentSnapshot,
+              messagesSnapshot: messagesSnapshot,
+              parentId: lastNodeIdRef.current,
+              branchId: currentBranchId
+            };
+            
+            setTimelineNodes(prev => [...prev, newNode]);
+            lastNodeIdRef.current = newNode.id;
+          }, 50);
+          
+          setInput('');
+        }
       }
     }
-  }
-  
-  if (interimTranscript) {
-    setInput(interimTranscript);
-  }
-};
+    
+    if (interimTranscript) {
+      setInput(interimTranscript);
+    }
+  };
   
   return instance;
 };
@@ -2578,52 +2529,80 @@ const renderTreeNode = (node: TimelineNode, branchStyle: any, isLastNode: boolea
               disabled={secretaryMode || isViewingHistory}
             />
             <div className="voice-controls">
+            <button
+              className={`mute-btn ${isMuted ? 'muted' : ''}`}
+              onClick={toggleMute}
+              title={isMuted ? "Unmute AI voice" : "Mute AI voice"}
+              style={{
+                background: isMuted ? '#EF4444' : '#2d3748',
+                color: 'white',
+                border: 'none',
+                padding: '8px 12px',
+                borderRadius: '20px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                transition: 'all 0.2s'
+              }}
+            >
+              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              <span>{isMuted ? 'Muted' : 'Sound'}</span>
+            </button>
+
+            <ModeToggle
+              secretaryMode={secretaryMode}
+              interactiveMode={interactiveMode}
+              onToggle={(mode) => {
+                if (mode === 'interactive') {
+                  setInteractiveMode(!interactiveMode);
+                } else if (mode === 'secretary') {
+                  toggleSecretaryMode();
+                }
+              }}
+              onSecretaryToggle={toggleSecretaryMode}
+            />
+
+            {/* 🔴 ADD THIS PUSH-TO-TALK BUTTON - ONLY SHOWS IN INTERACTIVE MODE */}
+            {interactiveMode && (
               <button
-                className={`mute-btn ${isMuted ? 'muted' : ''}`}
-                onClick={toggleMute}
-                title={isMuted ? "Unmute AI voice" : "Mute AI voice"}
+                onMouseDown={startPushToTalk}
+                onMouseUp={stopPushToTalk}
+                onMouseLeave={stopPushToTalk}
+                onTouchStart={startPushToTalk}
+                onTouchEnd={stopPushToTalk}
                 style={{
-                  background: isMuted ? '#EF4444' : '#2d3748',
+                  background: isPushToTalkActive ? '#10a37f' : '#ef4444',
                   color: 'white',
                   border: 'none',
-                  padding: '8px 12px',
+                  padding: '8px 16px',
                   borderRadius: '20px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
+                  gap: '8px',
                   fontSize: '0.75rem',
-                  transition: 'all 0.2s'
+                  fontWeight: 'bold',
+                  transition: 'all 0.1s'
                 }}
               >
-                {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                <span>{isMuted ? 'Muted' : 'Sound'}</span>
+                <Mic size={14} />
+                <span>{isPushToTalkActive ? 'LISTENING...' : 'HOLD TO TALK'}</span>
               </button>
+            )}
 
-              <ModeToggle
-                secretaryMode={secretaryMode}
-                interactiveMode={interactiveMode}
-                onToggle={(mode) => {
-                  if (mode === 'interactive') {
-                    setInteractiveMode(!interactiveMode);
-                  } else if (mode === 'secretary') {
-                    toggleSecretaryMode();
-                  }
-                }}
-                onSecretaryToggle={toggleSecretaryMode}
-              />
-
-              {secretaryMode && voiceActivity === 'listening' && (
-                <div className="waveform secretary-waveform">
-                  <div className="wave-bar"></div>
-                  <div className="wave-bar"></div>
-                  <div className="wave-bar"></div>
-                  <div className="wave-bar"></div>
-                  <div className="wave-bar"></div>
-                  <div className="wave-bar"></div>
-                </div>
-              )}
-            </div>
+            {secretaryMode && voiceActivity === 'listening' && (
+              <div className="waveform secretary-waveform">
+                <div className="wave-bar"></div>
+                <div className="wave-bar"></div>
+                <div className="wave-bar"></div>
+                <div className="wave-bar"></div>
+                <div className="wave-bar"></div>
+                <div className="wave-bar"></div>
+              </div>
+            )}
+          </div>
             <button
               className="send-btn"
               onClick={() => {
