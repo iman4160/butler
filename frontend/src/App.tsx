@@ -1238,30 +1238,19 @@ const loadSession = async (sessionId: string) => {
   try {
     const res = await fetch(`${API_URL}/sessions/${sessionId}`);
     const session = await res.json();
+    
+    // Always set these, even if empty
     setMessages(session.messages || []);
-    if (session.timelineNodes) {
-      setTimelineNodes(session.timelineNodes);
-      if (session.timelineNodes.length > 0) lastNodeIdRef.current = session.timelineNodes[session.timelineNodes.length - 1].id;
-    }
-    if (session.document) { setLivingDocument({ ...session.document, title: session.document.title || 'Notes' }); setEditTitleValue(session.document.title || 'Notes'); }
-    if (session.activity) setActivities(session.activity);
-    if (session.branches) {
-      setBranches(session.branches.map((b: Branch) => ({ ...b, collapsed: false })));
-      const maxBranchNumber = session.branches.reduce((max, b) => { const num = parseInt(b.name.split(' ')[1]) || 0; return Math.max(max, num); }, 0);
-      setNextBranchNumber(maxBranchNumber + 1);
-    }
-    if (session.nextBranchNumber) setNextBranchNumber(session.nextBranchNumber);
-    if (session.canvasFiles && session.canvasFiles.length > 0) { setCanvasFiles(session.canvasFiles); setShowCodeCanvas(true); }
-    else { setCanvasFiles([]); setShowCodeCanvas(false); }
-    if (session.decisions) setDecisions(session.decisions);
-    setCurrentSessionId(sessionId);
-    setIsViewingHistory(false); setActiveRestoredNodeId(null); setSearchTerm(''); setTranscriptSegments([]);
-    if (session.branches && session.branches.length > 0) {
-      const latestBranch = session.branches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-      setCurrentBranchId(latestBranch.id);
-      if (latestBranch.document) setLivingDocument(latestBranch.document);
-    } else { setCurrentBranchId('main'); }
-  } catch (error) { console.error('Failed to load session:', error); }
+    setLivingDocument(session.document || { content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
+    setEditTitleValue(session.document?.title || 'Notes');
+    setTimelineNodes(session.timelineNodes || []);
+    setBranches(session.branches || []);
+    setDecisions(session.decisions || []);
+    setCanvasFiles(session.canvasFiles || []);
+    // ... rest of your code
+  } catch (error) { 
+    console.error('Failed to load session:', error); 
+  }
 };
 
   const saveCurrentSession = async () => {
@@ -1274,15 +1263,37 @@ const loadSession = async (sessionId: string) => {
   const createNewSession = async () => {
   try {
     if (currentSessionId) await saveCurrentSession();
+    
     const res = await fetch(`${API_URL}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'New Chat' })
     });
     const data = await res.json();
-    sessionStorage.setItem('butler_session', data.sessionId);
-    setCurrentSessionId(data.sessionId);
-    await loadSession(data.sessionId);
+    const newSessionId = data.sessionId;
+    
+    // Clear ALL local state FIRST
+    setMessages([]);
+    setLivingDocument({ content: '', lastUpdated: new Date().toISOString(), title: 'Notes' });
+    setEditTitleValue('Notes');
+    setTimelineNodes([]);
+    setBranches([]);
+    setDecisions([]);
+    setCanvasFiles([]);
+    setShowCodeCanvas(false);
+    setIsViewingHistory(false);
+    setActiveRestoredNodeId(null);
+    setCurrentBranchId('main');
+    lastNodeIdRef.current = null;
+    
+    // Store new session ID
+    sessionStorage.setItem('butler_session', newSessionId);
+    setCurrentSessionId(newSessionId);
+    
+    // Load the empty session
+    await loadSession(newSessionId);
+    
+    console.log('✅ New session created and loaded:', newSessionId);
   } catch (error) { 
     console.error('Failed to create session:', error); 
   }
