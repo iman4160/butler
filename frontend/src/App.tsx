@@ -860,29 +860,33 @@ const stopPushToTalk = async () => {
   setVoiceActivity('idle');
   
   // Wait a moment for the final transcript to come through
-  await new Promise(resolve => setTimeout(resolve, 200));
+  await new Promise(resolve => setTimeout(resolve, 300));
   
-  // Get the transcribed text from the input field
-  const currentInputValue = input;
+  // Get the accumulated transcript
+  const accumulated = (window as any).accumulatedTranscript || '';
+  const currentInputValue = input || accumulated;
   
-  console.log('🎤 Final transcript from input:', currentInputValue);
+  console.log('🎤 Final accumulated transcript:', currentInputValue);
   
   // Send the message if there's content
   if (currentInputValue && currentInputValue.trim().length > 0) {
     console.log('📤 Auto-sending message:', currentInputValue);
     
-    // Send the message
     if (isSpeaking || isStreaming) {
       stopAIResponse();
     }
     
     const messageToSend = currentInputValue;
     setInput(''); // Clear input immediately
+    (window as any).accumulatedTranscript = ''; // 🔴 Clear accumulated transcript
     
     await sendStreamingMessage(messageToSend);
   } else {
     console.log('🎤 No transcript to send');
   }
+  
+  // Clear the accumulated transcript
+  (window as any).accumulatedTranscript = '';
   
   // Stop recognition but keep instance for next time
   if (recognitionRef.current) {
@@ -1367,104 +1371,108 @@ useEffect(() => {
   };
   
   instance.onresult = async (event: any) => {
-    console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
+  console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActiveRef:', isPushToTalkActiveRef.current);
+  
+  // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
+  if (interactiveMode && !isPushToTalkActiveRef.current) {
+    console.log('🎤 IGNORING - Push-to-talk not active');
+    return;
+  }
+  
+  // Ignore if viewing history
+  if (isViewingHistory) {
+    console.log('🎤 IGNORING - viewing history mode');
+    return;
+  }
+  
+  let finalTranscript = '', interimTranscript = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const result = event.results[i];
+    const transcript = result[0].transcript;
+    if (result.isFinal) finalTranscript += transcript;
+    else interimTranscript += transcript;
+  }
+  
+  // Ignore very short transcripts
+  if (finalTranscript && finalTranscript.length < 2) {
+    console.log('🎤 IGNORING - transcript too short');
+    return;
+  }
+  
+  if (finalTranscript) {
+    console.log('🎤 PROCESSING final transcript:', finalTranscript);
     
-    // For Interactive Mode: ONLY process if push-to-talk is active (use REF for latest value)
-    if (interactiveMode && !isPushToTalkActiveRef.current) {
-      console.log('🎤 IGNORING - Push-to-talk not active');
-      return;
-    }
-    
-    // Ignore if viewing history
-    if (isViewingHistory) {
-      console.log('🎤 IGNORING - viewing history mode');
-      return;
-    }
-    
-    let finalTranscript = '', interimTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const transcript = result[0].transcript;
-      if (result.isFinal) finalTranscript += transcript;
-      else interimTranscript += transcript;
-    }
-    
-    // Ignore very short transcripts
-    if (finalTranscript && finalTranscript.length < 2) {
-      console.log('🎤 IGNORING - transcript too short');
-      return;
-    }
-    
-    if (finalTranscript) {
-      console.log('🎤 PROCESSING:', finalTranscript);
+    // 🔴 CRITICAL: Store the accumulated transcript
+    if (interactiveMode) {
+      // Append to existing transcript instead of replacing
+      const currentAccumulated = (window as any).accumulatedTranscript || '';
+      const newAccumulated = currentAccumulated + ' ' + finalTranscript;
+      (window as any).accumulatedTranscript = newAccumulated.trim();
       
-      if (interactiveMode) {
-        console.log('💬 Interactive Mode - sending message');
+      // Show in input field for visual feedback
+      setInput(newAccumulated.trim());
+      console.log('🎤 Accumulated transcript:', (window as any).accumulatedTranscript);
+      return; // Don't send yet - wait for button release
+    }
+    
+    // Secretary mode handling...
+    if (secretaryMode) {
+      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+      
+      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+        console.log('🔊 Wake word detected!');
+        setIsProcessingWakeWord(true);
+        setWakeWordTriggered(true);
         setTranscriptSegments(prev => [...prev, finalTranscript]);
-        await updateDocumentOnly(finalTranscript);
-        await sendStreamingMessage(finalTranscript);
+        await updateDocumentOnly(cleanedText);
+        await sendStreamingMessage(cleanedText);
+        setTimeout(() => {
+          setIsProcessingWakeWord(false);
+          setWakeWordTriggered(false);
+        }, 2000);
         setInput('');
-        return;
-      }
-      
-      if (secretaryMode) {
-        // SECRETARY MODE - Check for wake word
-        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+      } else if (!hasWakeWord && !isSpeaking) {
+        console.log('📝 Documenting only');
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
         
-        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-          console.log('🔊 Wake word detected!');
-          setIsProcessingWakeWord(true);
-          setWakeWordTriggered(true);
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
-          await updateDocumentOnly(cleanedText);
-          await sendStreamingMessage(cleanedText);
-          setTimeout(() => {
-            setIsProcessingWakeWord(false);
-            setWakeWordTriggered(false);
-          }, 2000);
-          setInput('');
-        } else if (!hasWakeWord && !isSpeaking) {
-          console.log('📝 Documenting only');
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
+        const userMessage: Message = {
+          id: Date.now(),
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setMessages(prev => [...prev, userMessage]);
+        await updateDocumentOnly(finalTranscript);
+        
+        setTimeout(() => {
+          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
           
-          const userMessage: Message = {
-            id: Date.now(),
-            role: 'user',
-            content: finalTranscript,
-            timestamp: new Date().toLocaleTimeString()
+          const newNode: TimelineNode = {
+            id: Date.now().toString(),
+            userMessage: finalTranscript,
+            assistantMessage: '',
+            timestamp: new Date().toISOString(),
+            documentContent: documentSnapshot.content || '',
+            documentSnapshot: documentSnapshot,
+            messagesSnapshot: messagesSnapshot,
+            parentId: lastNodeIdRef.current,
+            branchId: currentBranchId
           };
-          setMessages(prev => [...prev, userMessage]);
-          await updateDocumentOnly(finalTranscript);
           
-          setTimeout(() => {
-            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-            
-            const newNode: TimelineNode = {
-              id: Date.now().toString(),
-              userMessage: finalTranscript,
-              assistantMessage: '',
-              timestamp: new Date().toISOString(),
-              documentContent: documentSnapshot.content || '',
-              documentSnapshot: documentSnapshot,
-              messagesSnapshot: messagesSnapshot,
-              parentId: lastNodeIdRef.current,
-              branchId: currentBranchId
-            };
-            
-            setTimelineNodes(prev => [...prev, newNode]);
-            lastNodeIdRef.current = newNode.id;
-          }, 50);
-          
-          setInput('');
-        }
+          setTimelineNodes(prev => [...prev, newNode]);
+          lastNodeIdRef.current = newNode.id;
+        }, 50);
+        
+        setInput('');
       }
     }
-    
-    if (interimTranscript) {
-      setInput(interimTranscript);
-    }
-  };
+  }
+  
+  if (interimTranscript) {
+    setInput(interimTranscript);
+  }
+};
   
       return instance;
   };
