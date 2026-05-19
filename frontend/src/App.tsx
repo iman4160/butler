@@ -1245,112 +1245,156 @@ useEffect(() => {
   };
   
   instance.onresult = async (event: any) => {
-    // CRITICAL: Ignore ALL transcription if AI is currently speaking
-    if (isSpeaking) {
-      console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
-      return;
+  // CRITICAL: Ignore ALL transcription if AI is currently speaking
+  if (isSpeaking) {
+    console.log('🎤 IGNORING speech - AI is currently speaking (echo prevention)');
+    return;
+  }
+  
+  // Also ignore if viewing history
+  if (isViewingHistory) {
+    console.log('🎤 IGNORING speech - viewing history mode');
+    return;
+  }
+  
+  let finalTranscript = '', interimTranscript = '';
+  for (let i = event.resultIndex; i < event.results.length; i++) {
+    const result = event.results[i];
+    const transcript = result[0].transcript;
+    if (result.isFinal) finalTranscript += transcript;
+    else interimTranscript += transcript;
+  }
+  setAudioLevel(Math.random() * 100);
+  
+  // Ignore very short transcripts (likely ambient noise or AI echo fragments)
+  if (finalTranscript && finalTranscript.length < 3) {
+    console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
+    return;
+  }
+  
+  // 🔴 NEW: Check if this sounds like AI reading its own response
+  // Common AI response patterns that shouldn't be transcribed
+  const aiResponsePatterns = [
+    /\b(here'?s|here is)\s+(a|an)\s+(code|example|function|component)\b/i,
+    /\b(i'?ll|i will)\s+(show|explain|demonstrate|help)\b/i,
+    /\b(let me)\s+(show|explain|help|create)\b/i,
+    /\b(the\s+code\s+below|the\s+following)\b/i,
+    /\b(you\s+can\s+use|you\s+can\s+create)\b/i,
+    /\b(first|second|third|finally|additionally|moreover)\b/i,
+    /\b(```)/,  // Code block indicator
+    /^\s*(sure|absolutely|of course|yes|no)\s*,?\s*(here|let me|i'll)/i,
+  ];
+  
+  // Check if transcript matches AI response patterns
+  let isAIResponse = false;
+  for (const pattern of aiResponsePatterns) {
+    if (pattern.test(finalTranscript)) {
+      isAIResponse = true;
+      console.log('🎤 IGNORING - Matched AI response pattern:', pattern);
+      break;
     }
-    
-    // Also ignore if viewing history
-    if (isViewingHistory) {
-      console.log('🎤 IGNORING speech - viewing history mode');
-      return;
+  }
+  
+  // Also ignore if transcript is very long (AI responses are typically longer)
+  if (!isAIResponse && finalTranscript.length > 150) {
+    isAIResponse = true;
+    console.log('🎤 IGNORING - Transcript too long (likely AI echo):', finalTranscript.length, 'chars');
+  }
+  
+  // Check for repetitive phrases (common in AI speech)
+  if (!isAIResponse) {
+    const words = finalTranscript.split(' ');
+    const uniqueWords = new Set(words);
+    if (uniqueWords.size < words.length * 0.3) {
+      isAIResponse = true;
+      console.log('🎤 IGNORING - High repetition detected (likely AI echo)');
     }
+  }
+  
+  if (isAIResponse) {
+    console.log('🎤 IGNORING - This appears to be AI echo, not user speech:', finalTranscript.slice(0, 100));
+    return;
+  }
+  
+  if (finalTranscript) {
+    console.log('🎤 Transcribed (USER SPEECH):', finalTranscript);
     
-    let finalTranscript = '', interimTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const transcript = result[0].transcript;
-      if (result.isFinal) finalTranscript += transcript;
-      else interimTranscript += transcript;
-    }
-    setAudioLevel(Math.random() * 100);
-    
-    // Ignore very short transcripts (likely ambient noise or AI echo fragments)
-    if (finalTranscript && finalTranscript.length < 3) {
-      console.log('🎤 IGNORING - transcript too short (echo/ambient noise):', finalTranscript);
-      return;
-    }
-    
-    if (finalTranscript) {
-      console.log('🎤 Transcribed:', finalTranscript);
+    if (interactiveMode) {
+      console.log('💬 Interactive Mode - responding');
+      setTranscriptSegments(prev => [...prev, finalTranscript]);
       
-      if (interactiveMode) {
-        console.log('💬 Interactive Mode - responding');
+      // Update document with the spoken text
+      await updateDocumentOnly(finalTranscript);
+      await sendStreamingMessage(finalTranscript);
+      setInput('');
+      return;
+    }
+    
+    if (secretaryMode) {
+      // SECRETARY MODE - Check for wake word
+      const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+      
+      if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
+        console.log('🔊 Wake word detected!');
+        setIsProcessingWakeWord(true);
+        setWakeWordTriggered(true);
         setTranscriptSegments(prev => [...prev, finalTranscript]);
         
-        // Update document with the spoken text
-        await updateDocumentOnly(finalTranscript);
-        await sendStreamingMessage(finalTranscript);
-        setInput('');
-        return;
-      }
-      
-      if (secretaryMode) {
-        // SECRETARY MODE - Check for wake word
-        const { hasWakeWord, cleanedText } = detectWakeWord(finalTranscript);
+        // Update document and get AI response
+        await updateDocumentOnly(cleanedText);
+        await sendStreamingMessage(cleanedText);
         
-        if (hasWakeWord && !isProcessingWakeWord && !isSpeaking) {
-          console.log('🔊 Wake word detected!');
-          setIsProcessingWakeWord(true);
-          setWakeWordTriggered(true);
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
+        setTimeout(() => {
+          setIsProcessingWakeWord(false);
+          setWakeWordTriggered(false);
+        }, 2000);
+        
+        setInput('');
+      } else if (!hasWakeWord && !isSpeaking) {
+        console.log('📝 Documenting only');
+        setTranscriptSegments(prev => [...prev, finalTranscript]);
+        
+        const userMessage: Message = {
+          id: Date.now(),
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setMessages(prev => [...prev, userMessage]);
+        
+        // Only update document, no AI response
+        await updateDocumentOnly(finalTranscript);
+        
+        // Add to timeline without AI response
+        setTimeout(() => {
+          const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
+          const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
           
-          // Update document and get AI response
-          await updateDocumentOnly(cleanedText);
-          await sendStreamingMessage(cleanedText);
-          
-          setTimeout(() => {
-            setIsProcessingWakeWord(false);
-            setWakeWordTriggered(false);
-          }, 2000);
-          
-          setInput('');
-        } else if (!hasWakeWord && !isSpeaking) {
-          console.log('📝 Documenting only');
-          setTranscriptSegments(prev => [...prev, finalTranscript]);
-          
-          const userMessage: Message = {
-            id: Date.now(),
-            role: 'user',
-            content: finalTranscript,
-            timestamp: new Date().toLocaleTimeString()
+          const newNode: TimelineNode = {
+            id: Date.now().toString(),
+            userMessage: finalTranscript,
+            assistantMessage: '',
+            timestamp: new Date().toISOString(),
+            documentContent: documentSnapshot.content || '',
+            documentSnapshot: documentSnapshot,
+            messagesSnapshot: messagesSnapshot,
+            parentId: lastNodeIdRef.current,
+            branchId: currentBranchId
           };
-          setMessages(prev => [...prev, userMessage]);
           
-          // Only update document, no AI response
-          await updateDocumentOnly(finalTranscript);
-          
-          // Add to timeline without AI response
-          setTimeout(() => {
-            const messagesSnapshot = JSON.parse(JSON.stringify([...messages, userMessage]));
-            const documentSnapshot = JSON.parse(JSON.stringify(livingDocument));
-            
-            const newNode: TimelineNode = {
-              id: Date.now().toString(),
-              userMessage: finalTranscript,
-              assistantMessage: '',
-              timestamp: new Date().toISOString(),
-              documentContent: documentSnapshot.content || '',
-              documentSnapshot: documentSnapshot,
-              messagesSnapshot: messagesSnapshot,
-              parentId: lastNodeIdRef.current,
-              branchId: currentBranchId
-            };
-            
-            setTimelineNodes(prev => [...prev, newNode]);
-            lastNodeIdRef.current = newNode.id;
-          }, 50);
-          
-          setInput('');
-        }
+          setTimelineNodes(prev => [...prev, newNode]);
+          lastNodeIdRef.current = newNode.id;
+        }, 50);
+        
+        setInput('');
       }
     }
-    
-    if (interimTranscript) {
-      setInput(interimTranscript);
-    }
-  };
+  }
+  
+  if (interimTranscript) {
+    setInput(interimTranscript);
+  }
+};
   
   return instance;
 };
