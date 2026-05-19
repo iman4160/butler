@@ -304,6 +304,7 @@ function App() {
   const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
   const pushToTalkTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const isPushToTalkActiveRef = useRef(false);
 
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
   const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(['main']));
@@ -788,36 +789,27 @@ const startPushToTalk = () => {
   }
   
   console.log('🎤 Push-to-talk: STARTED - microphone active');
-  setIsPushToTalkActive(true);
-  setVoiceActivity('listening');
   
-  // Make sure recognition is running
-  if (recognitionRef.current) {
-    try {
-      // If recognition is already stopped, restart it
-      recognitionRef.current.start();
-      console.log('🎤 Recognition restarted for push-to-talk');
-    } catch (e: any) {
-      if (e.name === 'InvalidStateError') {
-        console.log('Recognition already running');
-      } else {
-        console.error('Error starting recognition:', e);
-      }
-    }
-  }
+  // Set BOTH state and ref
+  setIsPushToTalkActive(true);
+  isPushToTalkActiveRef.current = true;  // ← CRITICAL
+  
+  setVoiceActivity('listening');
   
   if (pushToTalkTimeoutRef.current) {
     clearTimeout(pushToTalkTimeoutRef.current);
     pushToTalkTimeoutRef.current = null;
   }
 };
+
 const stopPushToTalk = () => {
   console.log('🎤 Push-to-talk: STOPPED - microphone inactive');
-  setIsPushToTalkActive(false);
-  setVoiceActivity('idle');
   
-  // Don't stop recognition, just ignore results via the flag
-  // This keeps the microphone ready for next time
+  // Set BOTH state and ref
+  setIsPushToTalkActive(false);
+  isPushToTalkActiveRef.current = false;  // ← CRITICAL
+  
+  setVoiceActivity('idle');
   
   pushToTalkTimeoutRef.current = setTimeout(() => {
     pushToTalkTimeoutRef.current = null;
@@ -1296,7 +1288,7 @@ useEffect(() => {
     console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActive:', isPushToTalkActive);
     
     // For Interactive Mode: ONLY process if push-to-talk is active
-    if (interactiveMode && !isPushToTalkActive) {
+    if (interactiveMode && !isPushToTalkActiveRef.current) {
       console.log('🎤 IGNORING - Push-to-talk not active');
       return;
     }
