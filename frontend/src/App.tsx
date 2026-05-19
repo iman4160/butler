@@ -1295,12 +1295,6 @@ useEffect(() => {
   }
 };
 
-  const addActivityToBackend = async (action: string, agent: ActivityLog['agent'] = 'system') => {
-    const newActivity: ActivityLog = { action, timestamp: new Date().toISOString(), agent };
-    setActivities(prev => [newActivity, ...prev].slice(0, 50));
-    try { await fetch(`${API_URL}/activity/log`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, agent }) }); } catch (error) {}
-  };
-
   const getBranchStyle = (branchId: string) => {
     if (branchId === 'main') return BRANCH_STYLES[0];
     const branch = branches.find(b => b.id === branchId);
@@ -2210,7 +2204,6 @@ const branchFromNode = async (node: TimelineNode) => {
     )}
   </div>
 );
-}
 }
 
 export default App;
