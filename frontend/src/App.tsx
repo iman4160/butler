@@ -1955,62 +1955,143 @@ const branchFromNode = async (node: TimelineNode) => {
     <div key={branchId} className="timeline-branch-group" style={{ marginLeft: level * 16 }}>
       {/* Branch Header - Collapsible */}
       <div 
-        className="timeline-branch-header-collapsible"
-        onClick={() => toggleBranchExpansion(branchId)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '8px 12px',
-          marginTop: level > 0 ? '8px' : '0',
-          marginBottom: '8px',
-          backgroundColor: `${branchStyle.color}10`,
-          borderRadius: '6px',
-          cursor: 'pointer',
-          borderLeft: `3px solid ${branchStyle.color}`,
-          userSelect: 'none'
-        }}
-      >
-        <span style={{ fontSize: '12px', color: branchStyle.color }}>
-          {isExpanded ? '▼' : '▶'}
-        </span>
-        <span className="branch-icon" style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
-        <span className="branch-name" style={{ color: branchStyle.color, fontWeight: 'bold', flex: 1 }}>
-          {isMain ? 'Main Branch' : branchStyle.name}
-        </span>
-        <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
-          {messageCount} {messageCount === 1 ? 'message' : 'messages'}
-        </span>
-        
-        {/* DELETE BUTTON - Only show for non-main branches */}
-        {!isMain && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation(); // Prevent collapsing when clicking delete
-              if (confirm(`Delete branch "${branchStyle.name}"? This cannot be undone.`)) {
-                deleteBranch(branchId);
-              }
-            }}
-            title="Delete branch"
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#ef4444',
-              cursor: 'pointer',
-              padding: '4px',
-              borderRadius: '4px',
-              opacity: 0.6,
-              transition: 'opacity 0.2s',
-              display: 'flex',
-              alignItems: 'center'
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
-          >
-            <Trash2 size={12} />
-          </button>
-        )}
-      </div>
+  className="timeline-branch-header-collapsible"
+  onClick={() => toggleBranchExpansion(branchId)}
+  style={{
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    marginTop: level > 0 ? '8px' : '0',
+    marginBottom: '8px',
+    backgroundColor: `${branchStyle.color}10`,
+    borderRadius: '6px',
+    cursor: 'pointer',
+    borderLeft: `3px solid ${branchStyle.color}`,
+    userSelect: 'none'
+  }}
+>
+  <span style={{ fontSize: '12px', color: branchStyle.color }}>
+    {isExpanded ? '▼' : '▶'}
+  </span>
+  <span className="branch-icon" style={{ color: branchStyle.color }}>{branchStyle.icon}</span>
+  
+  {/* Branch Name - Clickable to rename */}
+  {renamingBranchId === branchId ? (
+    <input
+      type="text"
+      value={branchRenameValue}
+      onChange={(e) => setBranchRenameValue(e.target.value)}
+      onBlur={() => {
+        renameBranch(branchId, branchRenameValue);
+        setRenamingBranchId(null);
+        setBranchRenameValue('');
+      }}
+      onKeyPress={(e) => {
+        if (e.key === 'Enter') {
+          renameBranch(branchId, branchRenameValue);
+          setRenamingBranchId(null);
+          setBranchRenameValue('');
+        }
+      }}
+      autoFocus
+      style={{
+        background: '#1a1a1a',
+        color: branchStyle.color,
+        border: `1px solid ${branchStyle.color}`,
+        borderRadius: '4px',
+        padding: '4px 8px',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        flex: 1
+      }}
+      onClick={(e) => e.stopPropagation()}
+    />
+  ) : (
+    <span 
+      className="branch-name" 
+      style={{ 
+        color: branchStyle.color, 
+        fontWeight: 'bold', 
+        flex: 1,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px'
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        setRenamingBranchId(branchId);
+        setBranchRenameValue(isMain ? 'Main Branch' : branchStyle.name);
+      }}
+      title="Double-click to rename"
+    >
+      {isMain ? 'Main Branch' : branchStyle.name}
+      <Edit3 size={10} style={{ opacity: 0.5 }} />
+    </span>
+  )}
+  
+  <span className="branch-count" style={{ fontSize: '11px', opacity: 0.7 }}>
+    {messageCount} {messageCount === 1 ? 'message' : 'messages'}
+  </span>
+  
+  {/* RENAME BUTTON - Pencil icon */}
+  {!isMain && renamingBranchId !== branchId && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setRenamingBranchId(branchId);
+        setBranchRenameValue(branchStyle.name);
+      }}
+      title="Rename branch"
+      style={{
+        background: 'none',
+        border: 'none',
+        color: branchStyle.color,
+        cursor: 'pointer',
+        padding: '4px',
+        borderRadius: '4px',
+        opacity: 0.6,
+        transition: 'opacity 0.2s',
+        display: 'flex',
+        alignItems: 'center'
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+    >
+      <Edit3 size={12} />
+    </button>
+  )}
+  
+  {/* DELETE BUTTON */}
+  {!isMain && (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (confirm(`Delete branch "${branchStyle.name}"? This cannot be undone.`)) {
+          deleteBranch(branchId);
+        }
+      }}
+      title="Delete branch"
+      style={{
+        background: 'none',
+        border: 'none',
+        color: '#ef4444',
+        cursor: 'pointer',
+        padding: '4px',
+        borderRadius: '4px',
+        opacity: 0.6,
+        transition: 'opacity 0.2s',
+        display: 'flex',
+        alignItems: 'center'
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; }}
+    >
+      <Trash2 size={12} />
+    </button>
+  )}
+</div>
       
       {/* Branch Content - Only show if expanded */}
       {isExpanded && (
