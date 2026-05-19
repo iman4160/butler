@@ -1771,7 +1771,7 @@ const branchFromNode = async (node: TimelineNode) => {
 
         <div className="chat-input-area">
           <div className="chat-input-wrapper">
-            <<input
+            <input
               value={input}
               onChange={(e) => {
                 if ((secretaryMode || interactiveMode) && (isSpeaking || isStreaming)) {
