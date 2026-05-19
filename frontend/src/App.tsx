@@ -791,16 +791,33 @@ const startPushToTalk = () => {
   setIsPushToTalkActive(true);
   setVoiceActivity('listening');
   
+  // Make sure recognition is running
+  if (recognitionRef.current) {
+    try {
+      // If recognition is already stopped, restart it
+      recognitionRef.current.start();
+      console.log('🎤 Recognition restarted for push-to-talk');
+    } catch (e: any) {
+      if (e.name === 'InvalidStateError') {
+        console.log('Recognition already running');
+      } else {
+        console.error('Error starting recognition:', e);
+      }
+    }
+  }
+  
   if (pushToTalkTimeoutRef.current) {
     clearTimeout(pushToTalkTimeoutRef.current);
     pushToTalkTimeoutRef.current = null;
   }
 };
-
 const stopPushToTalk = () => {
   console.log('🎤 Push-to-talk: STOPPED - microphone inactive');
   setIsPushToTalkActive(false);
   setVoiceActivity('idle');
+  
+  // Don't stop recognition, just ignore results via the flag
+  // This keeps the microphone ready for next time
   
   pushToTalkTimeoutRef.current = setTimeout(() => {
     pushToTalkTimeoutRef.current = null;
@@ -1244,8 +1261,18 @@ useEffect(() => {
   instance.interimResults = true;
   instance.lang = 'en-US';
   
+  // Request microphone permission and keep stream
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        mediaStreamRef.current = stream;
+        console.log('🎤 Microphone permission granted, stream ready');
+      })
+      .catch(err => console.error('Microphone permission denied:', err));
+  }
+  
   instance.onstart = () => {
-    console.log('🎤 Recognition started');
+    console.log('🎤 Recognition started - ready to listen');
     setVoiceActivity('listening');
     setIsListening(true);
   };
@@ -1266,6 +1293,8 @@ useEffect(() => {
   };
   
   instance.onresult = async (event: any) => {
+    console.log('🎤 onresult triggered - interactiveMode:', interactiveMode, 'isPushToTalkActive:', isPushToTalkActive);
+    
     // For Interactive Mode: ONLY process if push-to-talk is active
     if (interactiveMode && !isPushToTalkActive) {
       console.log('🎤 IGNORING - Push-to-talk not active');
@@ -1285,7 +1314,8 @@ useEffect(() => {
       if (result.isFinal) finalTranscript += transcript;
       else interimTranscript += transcript;
     }
-    setAudioLevel(Math.random() * 100);
+    
+    console.log('🎤 Transcript - final:', finalTranscript, 'interim:', interimTranscript);
     
     // Ignore very short transcripts
     if (finalTranscript && finalTranscript.length < 2) {
@@ -1294,10 +1324,10 @@ useEffect(() => {
     }
     
     if (finalTranscript) {
-      console.log('🎤 Transcribed:', finalTranscript);
+      console.log('🎤 PROCESSING:', finalTranscript);
       
       if (interactiveMode) {
-        console.log('💬 Interactive Mode - responding');
+        console.log('💬 Interactive Mode - sending message');
         setTranscriptSegments(prev => [...prev, finalTranscript]);
         await updateDocumentOnly(finalTranscript);
         await sendStreamingMessage(finalTranscript);
@@ -1360,6 +1390,7 @@ useEffect(() => {
     }
     
     if (interimTranscript) {
+      console.log('🎤 Interim transcript:', interimTranscript);
       setInput(interimTranscript);
     }
   };
