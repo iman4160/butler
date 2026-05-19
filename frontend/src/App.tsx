@@ -1400,6 +1400,8 @@ const loadSession = async (sessionId: string) => {
 };
 
 const branchFromNode = async (node: TimelineNode) => {
+  setIsViewingHistory(false);  // ← ADD THIS LINE
+  setActiveRestoredNodeId(null);  // ← ADD THIS LINE
   console.log('🌿 Creating branch from node:', node.id);
   console.log('Node message:', node.userMessage);
   
@@ -1505,6 +1507,9 @@ const branchFromNode = async (node: TimelineNode) => {
 
   const returnToCurrent = async () => {
   if (!currentSessionId) return;
+
+   setIsViewingHistory(false);  // ← ADD THIS LINE
+   setActiveRestoredNodeId(null);  // ← ADD THIS LINE
   
   // Just reload the session from scratch
   await loadSession(currentSessionId);
