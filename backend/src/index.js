@@ -478,7 +478,7 @@ GUIDING PRINCIPLES (not rigid rules):
 3. EVOLVE, DON'T JUST APPEND - New information should UPDATE or RESTRUCTURE, not just add. When an option becomes a decision, CHANGE how it's presented. When context shifts, REORGANIZE to match. Summarize old information instead of deleting it.
 
 4. LET STRUCTURE EMERGE FROM CONTENT - Look at WHAT you're documenting and HOW things relate:
-   - Comparisons → Tables or pros/cons
+   - Use bullet points for comparisons and options
    - Sequences → Timelines or numbered steps
    - Attributes → Property lists or specs
    - Decisions → Decision records

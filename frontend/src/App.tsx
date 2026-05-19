@@ -303,6 +303,7 @@ function App() {
 
   const [hasTriedCreate, setHasTriedCreate] = useState(false);
 
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [isMuted, setIsMuted] = useState(false);
   const [showBootSequence, setShowBootSequence] = useState(true);
@@ -324,6 +325,7 @@ function App() {
   }
   return id;
 });
+
 
   // Intent Detection
   const detectIntent = (text: string): { intent: 'brainstorming' | 'question' | 'command' | 'direct_address' | 'unknown', confidence: number } => {
@@ -1818,6 +1820,12 @@ const branchFromNode = async (node: TimelineNode) => {
     if (currentSessionId) { const timeout = setTimeout(() => saveCurrentSession(), 1000); return () => clearTimeout(timeout); }
   }, [messages, livingDocument, canvasFiles, timelineNodes, branches, decisions, currentSessionId]);
 
+  useEffect(() => {
+  if (shouldAutoScroll.current && messagesEndRef.current) {
+    messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  }
+}, [messages]);
+
   const renderDocument = () => {
     if (!livingDocument.content || livingDocument.content.trim() === '' || livingDocument.content.length < 10) {
       return ( <div className="doc-empty"><FileText size={32} /><h3>Document will appear here</h3><p>Butler automatically documents your conversation as you speak.</p></div> );
@@ -1980,6 +1988,7 @@ const branchFromNode = async (node: TimelineNode) => {
                 </div>
               </div>
             )}
+              <div ref={messagesEndRef} />
           </div>
         </div>
 
