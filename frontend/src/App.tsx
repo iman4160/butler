@@ -1781,18 +1781,48 @@ const branchFromNode = async (node: TimelineNode) => {
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await fetch(`${API_URL}/upload`, { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.success) await addActivityToBackend(`📎 File uploaded: ${data.fileName}`, 'system');
-    } catch (error) {}
-    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
-  };
+  console.log('🟣 handleFileUpload triggered', e.target.files);
+  const file = e.target.files?.[0];
+  if (!file) {
+    console.log('🔴 No file selected');
+    return;
+  }
+  
+  console.log('🟢 File selected:', file.name, file.type, file.size);
+  setUploading(true);
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  try {
+    console.log('🟡 Sending to:', `${API_URL}/upload`);
+    const res = await fetch(`${API_URL}/upload`, { 
+      method: 'POST', 
+      body: formData
+      // Don't set Content-Type header! Let browser set it with boundary
+    });
+    
+    console.log('🟠 Response status:', res.status);
+    const data = await res.json();
+    console.log('🟢 Response data:', data);
+    
+    if (data.success) {
+      addActivityToBackend(`📎 File uploaded: ${data.fileName}`, 'system');
+      // Optional: Auto-fill input with file preview
+      if (data.preview) {
+        setInput(`I've uploaded a file: ${data.fileName}\n\n${data.preview}\n\nWhat do you think?`);
+      }
+    } else {
+      console.error('Upload failed:', data);
+    }
+  } catch (error) {
+    console.error('🔴 Upload error:', error);
+  } finally {
+    setUploading(false);
+    // Clear the file input so same file can be uploaded again
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+};
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
   if (e.key === 'Enter' && !e.shiftKey && !secretaryMode && input.trim()) {
